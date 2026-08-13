@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Invoice &amp; Food Cost</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧾</text></svg>">
+  <style>
+    body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+    .login-card { width: min(380px, 100%); text-align: center; }
+    .login-card .brand-mark { font-size: 34px; display: block; margin-bottom: 6px; }
+    .login-card h1 { font-size: 19px; margin-bottom: 4px; }
+    .login-card form { margin-top: 18px; display: flex; flex-direction: column; gap: 10px; text-align: left; }
+    .login-card .btn { width: 100%; padding: 10px; }
+    .login-error { color: var(--danger); font-size: 13px; min-height: 18px; margin: 0; }
+  </style>
+</head>
+<body>
+  <div class="card login-card">
+    <span class="brand-mark">🧾</span>
+    <h1>Invoice &amp; Food Cost</h1>
+    <p class="muted small">Enter the shared password to continue.</p>
+    <form id="login-form">
+      <label>Password
+        <input type="password" id="password" autocomplete="current-password" autofocus required>
+      </label>
+      <p class="login-error" id="login-error"></p>
+      <button class="btn" type="submit">Sign in</button>
+    </form>
+  </div>
+
+  <script>
+    document.querySelector('#login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const error = document.querySelector('#login-error');
+      error.textContent = '';
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: document.querySelector('#password').value }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Could not sign in.');
+        window.location.href = '/';
+      } catch (err) {
+        error.textContent = err.message;
+        document.querySelector('#password').select();
+      }
+    });
+  </script>
+</body>
+</html>

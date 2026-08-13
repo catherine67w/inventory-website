@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Invoice &amp; Food Cost</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧾</text></svg>">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">🧾</span>
+      <div>
+        <strong>Invoice &amp; Food Cost</strong>
+        <small id="extraction-status">checking extraction…</small>
+      </div>
+      <button class="btn ghost small hidden" id="signout-btn">Sign out</button>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-view="dashboard" class="active">Dashboard</button>
+      <button data-view="upload">Upload</button>
+      <button data-view="invoices">Invoices</button>
+      <button data-view="items">Item prices</button>
+      <button data-view="vendors">Vendors</button>
+      <button data-view="sales">Net sales</button>
+      <button data-view="analysis">Profit analysis</button>
+    </nav>
+  </header>
+
+  <main id="main">
+
+    <!-- DASHBOARD -->
+    <section class="view" id="view-dashboard">
+      <div class="view-head">
+        <h1>Dashboard</h1>
+        <p class="muted" id="dashboard-period"></p>
+      </div>
+      <div class="stat-row" id="dashboard-stats"></div>
+      <div class="grid-2">
+        <div class="card">
+          <h2>Spend by category — month to date</h2>
+          <div id="dashboard-categories"></div>
+        </div>
+        <div class="card">
+          <h2>Recently added</h2>
+          <div id="dashboard-recent"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- UPLOAD -->
+    <section class="view hidden" id="view-upload">
+      <div class="view-head">
+        <h1>Upload invoices</h1>
+        <p class="muted">Drop in PDFs or photos and the line items are read out automatically. CSV line-item exports import without an API key.</p>
+      </div>
+
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="file-input" multiple accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.csv,.tsv,.txt" hidden>
+        <div class="dropzone-inner">
+          <span class="dz-icon">📄</span>
+          <p><strong>Drop invoices here</strong> or <button class="link" id="browse-btn" type="button">browse files</button></p>
+          <small>PDF, JPG, PNG, WEBP, or CSV — up to 20 files, 30&nbsp;MB each</small>
+        </div>
+      </div>
+
+      <div id="upload-progress" class="hidden">
+        <div class="progress-note" id="progress-note"></div>
+      </div>
+
+      <div id="draft-list"></div>
+
+      <div class="card" id="manual-entry-card">
+        <h2>Or enter an invoice by hand</h2>
+        <button class="btn" id="manual-new">New blank invoice</button>
+      </div>
+    </section>
+
+    <!-- INVOICES -->
+    <section class="view hidden" id="view-invoices">
+      <div class="view-head">
+        <h1>Invoices</h1>
+        <button class="btn" id="invoices-new">New invoice</button>
+      </div>
+      <div class="filters card">
+        <label>From <input type="date" id="inv-from"></label>
+        <label>To <input type="date" id="inv-to"></label>
+        <label>Vendor
+          <select id="inv-vendor"><option value="">All vendors</option></select>
+        </label>
+        <label>Status
+          <select id="inv-status">
+            <option value="all">All</option>
+            <option value="review">Needs review</option>
+            <option value="approved">Approved</option>
+          </select>
+        </label>
+        <label class="grow">Search <input type="search" id="inv-q" placeholder="vendor, invoice #, or item"></label>
+        <button class="btn" id="inv-apply">Apply</button>
+        <button class="btn ghost" id="inv-clear">Clear</button>
+      </div>
+      <div class="card" id="invoice-table"></div>
+    </section>
+
+    <!-- ITEMS -->
+    <section class="view hidden" id="view-items">
+      <div class="view-head">
+        <h1>Item prices</h1>
+        <p class="muted">Every product you have purchased, with its latest price and how it has moved.</p>
+      </div>
+      <div class="filters card">
+        <label>From <input type="date" id="item-from"></label>
+        <label>To <input type="date" id="item-to"></label>
+        <label class="grow">Search <input type="search" id="item-q" placeholder="product description"></label>
+        <button class="btn" id="item-apply">Apply</button>
+      </div>
+      <div class="card" id="items-table"></div>
+    </section>
+
+    <!-- VENDORS -->
+    <section class="view hidden" id="view-vendors">
+      <div class="view-head">
+        <h1>Vendors</h1>
+        <button class="btn" id="vendor-new">Add vendor</button>
+      </div>
+      <div class="card" id="vendors-table"></div>
+    </section>
+
+    <!-- SALES -->
+    <section class="view hidden" id="view-sales">
+      <div class="view-head">
+        <h1>Net sales</h1>
+        <p class="muted">Type in your net sales by day. These feed every cost percentage and margin on the analysis screen.</p>
+      </div>
+      <div class="card">
+        <h2>Add or update a day</h2>
+        <form class="inline-form" id="sales-form">
+          <label>Date <input type="date" id="sale-date" required></label>
+          <label>Net sales <input type="number" step="0.01" min="0" id="sale-amount" placeholder="0.00" required></label>
+          <label class="grow">Note <input type="text" id="sale-note" placeholder="optional"></label>
+          <button class="btn" type="submit">Save</button>
+        </form>
+        <p class="muted small">Saving a date that already exists overwrites it. To enter a whole week at once, use the bulk box below.</p>
+      </div>
+      <div class="card">
+        <h2>Bulk entry</h2>
+        <p class="muted small">One line per day: <code>2026-08-01, 4820.55</code> — an optional third column becomes the note.</p>
+        <textarea id="sales-bulk" rows="6" placeholder="2026-08-01, 4820.55&#10;2026-08-02, 5310.00, Saturday"></textarea>
+        <button class="btn" id="sales-bulk-save">Save all lines</button>
+      </div>
+      <div class="card">
+        <h2>Entered days</h2>
+        <div class="filters inline">
+          <label>From <input type="date" id="sales-from"></label>
+          <label>To <input type="date" id="sales-to"></label>
+          <button class="btn ghost" id="sales-filter">Filter</button>
+        </div>
+        <div id="sales-table"></div>
+      </div>
+    </section>
+
+    <!-- ANALYSIS -->
+    <section class="view hidden" id="view-analysis">
+      <div class="view-head">
+        <h1>Profit margin analysis</h1>
+        <p class="muted">Pick any date range — the presets are shortcuts, and the two date boxes accept anything.</p>
+      </div>
+
+      <div class="card range-card">
+        <div class="preset-row" id="presets">
+          <button data-preset="this-week">This week</button>
+          <button data-preset="last-week">Last week</button>
+          <button data-preset="mtd" class="active">Month to date</button>
+          <button data-preset="last-month">Last month</button>
+          <button data-preset="last-30">Last 30 days</button>
+          <button data-preset="last-90">Last 90 days</button>
+          <button data-preset="qtd">Quarter to date</button>
+          <button data-preset="ytd">Year to date</button>
+        </div>
+        <div class="filters inline">
+          <label>From <input type="date" id="an-from"></label>
+          <label>To <input type="date" id="an-to"></label>
+          <label class="check"><input type="checkbox" id="an-compare" checked> Compare to previous period</label>
+          <label class="check"><input type="checkbox" id="an-approved"> Approved invoices only</label>
+          <button class="btn" id="an-run">Run analysis</button>
+        </div>
+        <div class="inv-adjust">
+          <span class="muted small">Optional inventory adjustment — leave blank to analyze purchases as cost:</span>
+          <label>Beginning inventory <input type="number" step="0.01" id="an-begin" placeholder="0.00"></label>
+          <label>Ending inventory <input type="number" step="0.01" id="an-end" placeholder="0.00"></label>
+        </div>
+      </div>
+
+      <div id="analysis-body"></div>
+    </section>
+  </main>
+
+  <!-- INVOICE EDITOR -->
+  <div class="modal hidden" id="editor">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="editor-title">Invoice</h2>
+        <div class="modal-head-actions">
+          <a id="editor-source" class="link" target="_blank" rel="noopener">View original</a>
+          <button class="icon-btn" id="editor-close" aria-label="Close">✕</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="field-grid">
+          <label>Vendor <input type="text" id="ed-vendor" list="vendor-options" placeholder="Vendor name"></label>
+          <datalist id="vendor-options"></datalist>
+          <label>Invoice # <input type="text" id="ed-number"></label>
+          <label>Invoice date <input type="date" id="ed-date"></label>
+          <label>Due date <input type="date" id="ed-due"></label>
+          <label>Status
+            <select id="ed-status">
+              <option value="review">Needs review</option>
+              <option value="approved">Approved</option>
+            </select>
+          </label>
+        </div>
+
+        <h3>Line items</h3>
+        <div class="table-scroll">
+          <table class="line-table">
+            <thead>
+              <tr>
+                <th class="w-desc">Description</th>
+                <th>SKU</th>
+                <th class="w-cat">Category</th>
+                <th class="num">Qty</th>
+                <th>Unit</th>
+                <th class="num">Unit price</th>
+                <th class="num">Extended</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="ed-items"></tbody>
+          </table>
+        </div>
+        <button class="btn ghost" id="ed-add-line">Add line</button>
+
+        <div class="totals-grid">
+          <label>Subtotal <input type="number" step="0.01" id="ed-subtotal"></label>
+          <label>Tax <input type="number" step="0.01" id="ed-tax"></label>
+          <label>Freight <input type="number" step="0.01" id="ed-freight"></label>
+          <label>Discount <input type="number" step="0.01" id="ed-discount"></label>
+          <label>Total <input type="number" step="0.01" id="ed-total"></label>
+        </div>
+        <p class="muted small" id="ed-balance"></p>
+        <label class="block">Notes <textarea id="ed-notes" rows="2"></textarea></label>
+      </div>
+      <div class="modal-foot">
+        <button class="btn danger ghost" id="ed-delete">Delete</button>
+        <span class="spacer"></span>
+        <button class="btn ghost" id="ed-cancel">Cancel</button>
+        <button class="btn" id="ed-save">Save invoice</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ITEM HISTORY -->
+  <div class="modal hidden" id="history">
+    <div class="modal-card narrow">
+      <div class="modal-head">
+        <h2 id="history-title">Price history</h2>
+        <button class="icon-btn" id="history-close" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="history-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>
