@@ -1146,6 +1146,137 @@ $('#analysis-body').addEventListener('click', (e) => {
   if (goto) showView(goto.dataset.goto);
 });
 
+
+/* ---------- security ---------- */
+
+loaders.security = async function loadSecurity() {
+  const status = await api('/api/2fa/status');
+  state.twofa = status;
+
+  $('#security-status').innerHTML = `
+    <div class="sec-list">
+      <div class="sec-row on">
+        <span class="sec-mark">✓</span>
+        <div>
+          <strong>Shared password</strong>
+          <div class="muted small">Everyone signs in with the same password, set in the .env file on the Mac.</div>
+        </div>
+      </div>
+      <div class="sec-row ${status.enabled ? 'on' : 'off'}">
+        <span class="sec-mark">${status.enabled ? '✓' : '○'}</span>
+        <div>
+          <strong>Two-factor code</strong>
+          <div class="muted small">${status.enabled
+            ? 'A six-digit code from an authenticator app is required as well as the password.'
+            : 'Not turned on. The password alone gets someone in.'}</div>
+        </div>
+      </div>
+      <div class="sec-row on">
+        <span class="sec-mark">✓</span>
+        <div>
+          <strong>Lockout after repeated failures</strong>
+          <div class="muted small">${status.lockout.max_attempts} wrong attempts locks that device out
+            for ${status.lockout.lock_minutes} minutes. Every failure is logged on the Mac.</div>
+        </div>
+      </div>
+      <div class="sec-row on">
+        <span class="sec-mark">✓</span>
+        <div>
+          <strong>Sessions expire</strong>
+          <div class="muted small">Each device stays signed in for two weeks, then has to sign in again.
+            Changing the password signs everyone out immediately.</div>
+        </div>
+      </div>
+    </div>`;
+
+  renderTwoFactor();
+};
+
+function renderTwoFactor() {
+  const enabled = state.twofa.enabled;
+  $('#twofa-body').innerHTML = enabled ? `
+    <p class="muted small">Two-factor is <strong>on</strong>. Signing in needs the password and a
+      current code from an authenticator app.</p>
+    <div class="filters inline">
+      <button class="btn ghost" id="twofa-show-qr">Add another phone</button>
+      <button class="btn danger ghost" id="twofa-disable">Turn off</button>
+    </div>
+    <div id="twofa-qr"></div>`
+    : `
+    <p class="muted small">Add a second step to sign-in: a six-digit code from an authenticator app
+      on a phone. Codes change every 30 seconds and work without a signal.</p>
+    <button class="btn" id="twofa-begin">Set up two-factor</button>
+    <div id="twofa-qr"></div>`;
+}
+
+function renderEnrolment(data, { adding = false } = {}) {
+  $('#twofa-qr').innerHTML = `
+    <div class="enrol">
+      <img class="enrol-qr" src="${data.qr}" alt="QR code for the authenticator app" width="220" height="220">
+      <div class="enrol-steps">
+        <h3>${adding ? 'Add this phone' : 'Set it up'}</h3>
+        <ol>
+          <li>Install <strong>Google Authenticator</strong>, <strong>Authy</strong>, or the password
+            manager you already use.</li>
+          <li>Scan this QR code with it.</li>
+          <li>If scanning does not work, type this key in by hand:
+            <div class="enrol-secret">${esc(data.secret)}</div></li>
+          ${adding ? '' : '<li>Enter the six-digit code it shows, to confirm it worked.</li>'}
+        </ol>
+        ${adding ? `
+          <p class="muted small">Everyone shares one authenticator entry, so this is the same code
+            your other phones already show. Nothing changes for anyone signed in.</p>`
+          : `
+          <form class="inline-form" id="twofa-confirm-form">
+            <label>Six-digit code
+              <input type="text" id="twofa-code" inputmode="numeric" maxlength="6" placeholder="000000" required>
+            </label>
+            <button class="btn" type="submit">Confirm and turn on</button>
+          </form>
+          <p class="muted small">Keep this page open until you have confirmed — the code is not
+            active until then.</p>`}
+      </div>
+    </div>`;
+}
+
+$('#view-security').addEventListener('click', async (e) => {
+  if (e.target.closest('#twofa-begin')) {
+    try {
+      renderEnrolment(await api('/api/2fa/begin', { method: 'POST' }));
+    } catch (err) { toast(err.message, true); }
+  }
+
+  if (e.target.closest('#twofa-show-qr')) {
+    try {
+      renderEnrolment(await api('/api/2fa/qr', { method: 'POST' }), { adding: true });
+    } catch (err) { toast(err.message, true); }
+  }
+
+  if (e.target.closest('#twofa-disable')) {
+    const code = prompt('Enter a current six-digit code to turn two-factor off:');
+    if (!code) return;
+    try {
+      await api('/api/2fa/disable', { method: 'POST', body: JSON.stringify({ code }) });
+      toast('Two-factor turned off.');
+      loaders.security();
+    } catch (err) { toast(err.message, true); }
+  }
+});
+
+$('#view-security').addEventListener('submit', async (e) => {
+  if (!e.target.closest('#twofa-confirm-form')) return;
+  e.preventDefault();
+  const code = $('#twofa-code').value;
+  try {
+    await api('/api/2fa/enable', { method: 'POST', body: JSON.stringify({ code }) });
+    toast('Two-factor is on. Everyone needs a code from now on.');
+    loaders.security();
+  } catch (err) {
+    toast(err.message, true);
+    $('#twofa-code').select();
+  }
+});
+
 /* ---------- boot ---------- */
 
 $('#signout-btn').addEventListener('click', async () => {

@@ -8,6 +8,7 @@ const multer = require('multer');
 
 const { db, vendorId } = require('./db');
 const { parseFile, apiKeyProblem, PRICING, MODEL } = require('./parse');
+const auth = require('./auth');
 const { CATEGORIES, GROUPS, NAMES, groupOf } = require('./categories');
 
 const app = express();
@@ -28,6 +29,9 @@ const PASSWORD = String(process.env.APP_PASSWORD || '');
 const COOKIE_NAME = 'invcogs_session';
 const SESSION_HOURS = 24 * 14;
 const OPEN_PATHS = new Set(['/login.html', '/styles.css', '/api/login', '/api/session']);
+
+// Express needs this to read the real client address behind any proxy.
+app.set('trust proxy', true);
 
 const hmacKey = () => crypto.createHash('sha256').update('invoice-cogs::' + PASSWORD).digest();
 const signExpiry = (exp) => crypto.createHmac('sha256', hmacKey()).update(String(exp)).digest('hex');
@@ -71,15 +75,53 @@ app.use((req, res, next) => {
 app.get('/api/session', (req, res) => {
   res.json({
     password_required: Boolean(PASSWORD),
+    two_factor_required: auth.isEnabled(),
     signed_in: !PASSWORD || tokenIsValid(readCookie(req, COOKIE_NAME)),
+    lockout: auth.lockoutState(req),
   });
 });
 
 app.post('/api/login', (req, res) => {
   if (!PASSWORD) return res.json({ ok: true });
-  if (!passwordMatches(req.body.password || '')) {
-    return res.status(401).json({ error: 'That password is not right.' });
+
+  const lock = auth.lockoutState(req);
+  if (lock.locked) {
+    return res.status(429).json({
+      error: `Too many failed attempts. Try again in ${lock.minutes} minute${lock.minutes === 1 ? '' : 's'}.`,
+      locked: true,
+    });
   }
+
+  if (!passwordMatches(req.body.password || '')) {
+    const after = auth.recordFailure(req);
+    return res.status(401).json({
+      error: after.locked
+        ? `Too many failed attempts. Locked for ${auth.LOCK_MINUTES} minutes.`
+        : 'That password is not right.',
+      attempts_remaining: after.remaining,
+      locked: after.locked,
+    });
+  }
+
+  // Second factor, when it has been turned on.
+  if (auth.isEnabled()) {
+    const secret = auth.getSetting('totp_secret');
+    const step = auth.verifyCode(secret, req.body.code || '');
+    if (step === null) {
+      const after = auth.recordFailure(req);
+      return res.status(401).json({
+        error: after.locked
+          ? `Too many failed attempts. Locked for ${auth.LOCK_MINUTES} minutes.`
+          : 'That code is not right, or it has already been used. Wait for the next one.',
+        attempts_remaining: after.remaining,
+        locked: after.locked,
+        need_code: true,
+      });
+    }
+    auth.markStepUsed(step);
+  }
+
+  auth.clearFailures(req);
   res.setHeader('Set-Cookie',
     `${COOKIE_NAME}=${issueToken()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_HOURS * 3600}`);
   res.json({ ok: true });
@@ -400,6 +442,58 @@ app.get('/api/items/history', (req, res) => {
   `).all(description));
 });
 
+
+
+// --- two-factor setup -----------------------------------------------------
+//
+// These sit behind the normal sign-in gate: you must already be signed in to
+// turn two-factor on, off, or to re-display the QR code for a new phone.
+
+const QRCode = require('qrcode');
+
+app.get('/api/2fa/status', (req, res) => {
+  res.json({
+    enabled: auth.isEnabled(),
+    lockout: { max_attempts: auth.MAX_ATTEMPTS, lock_minutes: auth.LOCK_MINUTES },
+  });
+});
+
+app.post('/api/2fa/begin', wrap(async (req, res) => {
+  const secret = auth.beginEnrolment();
+  const uri = auth.secretUri(secret);
+  res.json({
+    secret,
+    uri,
+    qr: await QRCode.toDataURL(uri, { margin: 1, width: 260 }),
+  });
+}));
+
+app.post('/api/2fa/enable', (req, res) => {
+  const result = auth.completeEnrolment(req.body.code || '');
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  console.log('[auth] two-factor turned on');
+  res.json({ ok: true });
+});
+
+// Re-show the QR for the *current* secret, so another phone can be added
+// without resetting everyone else's authenticator.
+app.post('/api/2fa/qr', wrap(async (req, res) => {
+  const secret = auth.getSetting('totp_secret');
+  if (!secret) return res.status(400).json({ error: 'Two-factor is not turned on yet.' });
+  const uri = auth.secretUri(secret);
+  res.json({ secret, uri, qr: await QRCode.toDataURL(uri, { margin: 1, width: 260 }) });
+}));
+
+app.post('/api/2fa/disable', (req, res) => {
+  if (!auth.isEnabled()) return res.json({ ok: true });
+  const secret = auth.getSetting('totp_secret');
+  if (auth.verifyCode(secret, req.body.code || '', { allowReplay: true }) === null) {
+    return res.status(401).json({ error: 'Enter a current code to turn two-factor off.' });
+  }
+  auth.disable();
+  console.log('[auth] two-factor turned off');
+  res.json({ ok: true });
+});
 
 // --- menu -----------------------------------------------------------------
 

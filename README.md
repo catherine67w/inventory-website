@@ -38,9 +38,26 @@ fraction of a cent per invoice.
 
 ## Signing in
 
-The app is protected by one shared password, set as `APP_PASSWORD` in `.env`. To change it,
+The app is protected by a shared password, set as `APP_PASSWORD` in `.env`. To change it,
 edit that line and restart — everyone is signed out and uses the new one. Sessions last two
 weeks per device.
+
+**Two-factor codes** can be added on top from the **Security** tab. Everyone scans one QR code
+into an authenticator app (Google Authenticator, Authy, or a password manager); after that,
+signing in needs the password *and* the current six-digit code. Codes change every 30 seconds,
+are generated on the phone with no signal needed, and each code works only once.
+
+**Lockout:** five wrong attempts locks that device out for 15 minutes, and every failure is
+logged in the terminal running the server. Restarting the server clears all lockouts.
+
+**If the authenticator phone is lost**, turn two-factor off from the Mac:
+
+```bash
+npm run disable-2fa
+```
+
+That needs physical access to the machine, so it is a safety net rather than a way in. Everyone
+signs in with the password alone afterwards until it is set up again.
 
 Leaving `APP_PASSWORD` empty removes the gate entirely. Only do that if no one else can reach
 the machine.

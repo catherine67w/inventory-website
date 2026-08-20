@@ -79,6 +79,11 @@ CREATE TABLE IF NOT EXISTS menu_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_menu_items_section ON menu_items(section_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT ''
+);
 `);
 
 // Columns added after the first release. Adding them here keeps existing

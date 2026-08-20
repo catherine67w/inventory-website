@@ -26,6 +26,7 @@
       <button data-view="sales">Net sales</button>
       <button data-view="menu">Menu</button>
       <button data-view="analysis">Profit analysis</button>
+      <button data-view="security">Security</button>
     </nav>
   </header>
 
@@ -222,6 +223,38 @@
       </div>
 
       <div id="analysis-body"></div>
+    </section>
+
+    <!-- SECURITY -->
+    <section class="view hidden" id="view-security">
+      <div class="view-head">
+        <h1>Security</h1>
+        <p class="muted">Who can get into this system, and what stands in their way.</p>
+      </div>
+
+      <div class="card">
+        <h2>How sign-in works now</h2>
+        <div id="security-status"></div>
+      </div>
+
+      <div class="card">
+        <h2>Two-factor codes</h2>
+        <div id="twofa-body"></div>
+      </div>
+
+      <div class="card">
+        <h2>If you lose the phone</h2>
+        <p class="muted small">
+          Two-factor can always be switched off from the Mac running this app, even without a code.
+          Open Terminal and run:
+        </p>
+        <pre class="code-block">cd ~/Coding/invoice-cogs
+npm run disable-2fa</pre>
+        <p class="muted small">
+          That needs physical access to the machine, so it is a safety net rather than a way in.
+          Everyone signs in with the password alone afterwards, until you set it up again here.
+        </p>
+      </div>
     </section>
   </main>
 

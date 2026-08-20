@@ -410,3 +410,49 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   border-radius: 4px;
 }
 .mi-tag.off { color: var(--muted); background: #eef1f5; }
+
+/* Security --------------------------------------------------------------- */
+
+.sec-list { display: flex; flex-direction: column; gap: 12px; }
+.sec-row { display: flex; gap: 12px; align-items: flex-start; }
+.sec-mark {
+  flex: 0 0 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  margin-top: 1px;
+}
+.sec-row.on .sec-mark { background: var(--brand-soft); color: var(--brand); }
+.sec-row.off .sec-mark { background: #fdf1e3; color: var(--accent); }
+.sec-row.off strong { color: var(--accent); }
+
+.code-block {
+  background: #eef1f4;
+  border-radius: 7px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.enrol { display: flex; gap: 22px; margin-top: 16px; flex-wrap: wrap; align-items: flex-start; }
+.enrol-qr { border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 6px; }
+.enrol-steps { flex: 1; min-width: 260px; }
+.enrol-steps h3 { margin-top: 0; }
+.enrol-steps ol { margin: 0 0 14px; padding-left: 20px; font-size: 14px; }
+.enrol-steps li { margin-bottom: 7px; }
+.enrol-secret {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  letter-spacing: 1px;
+  background: #eef1f4;
+  padding: 7px 10px;
+  border-radius: 6px;
+  margin-top: 5px;
+  word-break: break-all;
+}

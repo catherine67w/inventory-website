@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "caffeinate -is node server.js",
-    "start:nocaffeine": "node server.js"
+    "start:nocaffeine": "node server.js",
+    "disable-2fa": "node scripts/disable-2fa.js"
   },
   "keywords": [],
   "author": "",
@@ -15,6 +16,7 @@
     "better-sqlite3": "^13.0.3",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "multer": "^2.2.0"
+    "multer": "^2.2.0",
+    "qrcode": "^1.5.4"
   }
 }
