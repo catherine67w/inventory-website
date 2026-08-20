@@ -71,7 +71,26 @@ to sleep**, which takes the site down for everyone, so leave it open and plugged
 | **Item prices** | Every product you have bought, with its latest price, the change since last time, its low/high, and total spend. Click for full price history. |
 | **Vendors** | Spend and invoice count per vendor. |
 | **Net sales** | Type net sales in by day, one at a time or pasted in bulk. This is what every percentage is measured against. |
+| **Menu** | Every dish and drink with names, codes, and prices — see below. |
 | **Profit analysis** | The custom date range analysis — see below. |
+
+
+## Menu
+
+The **Menu** tab holds every dish and drink with its English name, Chinese name, item code, and
+price — seeded from the printed menu (138 items across 16 sections).
+
+- **Search** matches English names, Chinese names, and item codes, so `lamb`, `羊肉`, and `L2`
+  all find the lamb shoulder roll.
+- **Two prices** on a line (soup bases, some lamb) are stored as a regular and a large/full-pot
+  price and shown as `$10.00 / $29.00`.
+- **Click any item to edit it** — prices change, and this is where you change them.
+- **Mark an item unavailable** when it comes off the line rather than deleting it; it stays in
+  the list, greyed out, and can be switched back on.
+- **New section** adds a category; a section has to be empty before it can be deleted.
+
+The seed data lives in `menu-data.js` and is loaded **only when the menu table is empty**, so
+edits made in the app are never overwritten by a restart.
 
 ## Profit analysis
 

@@ -10,6 +10,25 @@ const { NAMES } = require('./categories');
 
 const MODEL = 'claude-opus-5';
 
+// Claude Opus 5 list prices, US dollars per million tokens. Update these if
+// Anthropic changes their pricing.
+const PRICING = {
+  input: 5.00,
+  output: 25.00,
+  cache_write: 6.25,
+  cache_read: 0.50,
+};
+
+// Turns an API usage object into a dollar figure.
+function costOf(usage = {}) {
+  const dollars =
+    ((usage.input_tokens || 0) * PRICING.input +
+     (usage.output_tokens || 0) * PRICING.output +
+     (usage.cache_creation_input_tokens || 0) * PRICING.cache_write +
+     (usage.cache_read_input_tokens || 0) * PRICING.cache_read) / 1e6;
+  return Math.round(dollars * 1e6) / 1e6; // keep sub-cent precision
+}
+
 const IMAGE_TYPES = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -78,35 +97,77 @@ function fileToBlock(filePath, ext) {
   return { type: 'image', source: { type: 'base64', media_type: IMAGE_TYPES[ext], data } };
 }
 
+// Checks the API key before we try to use it, so a bad key produces a sentence
+// the user can act on instead of a low-level encoding error. Returns null when
+// the key looks usable.
+function apiKeyProblem() {
+  const key = process.env.ANTHROPIC_API_KEY || '';
+  if (!key) {
+    return 'No API key set. Add ANTHROPIC_API_KEY to the .env file and restart, or enter invoices by hand.';
+  }
+  if ([...key].some((c) => c.charCodeAt(0) > 255)) {
+    return 'The API key in .env is a row of dots, not the real key — the hidden version got copied. ' +
+           'Anthropic shows a key only once, when you create it, so create a new key and use the Copy button in that dialog.';
+  }
+  if (!key.startsWith('sk-ant-')) {
+    return 'The API key in .env does not look like an Anthropic key (it should start with "sk-ant-"). Check the .env file.';
+  }
+  if (key.length < 60) {
+    return `The API key in .env is only ${key.length} characters — it was cut off during copying. ` +
+           'A full key is around 100. Copy it again with the Copy button rather than selecting the text.';
+  }
+  return null;
+}
+
 async function parseWithClaude(filePath, ext) {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    const err = new Error(
-      'Automatic extraction needs an Anthropic API key. Add ANTHROPIC_API_KEY to the .env file and restart, ' +
-      'or enter this invoice manually.'
-    );
-    err.code = 'NO_API_KEY';
+  const problem = apiKeyProblem();
+  if (problem) {
+    const err = new Error(problem);
+    err.code = 'BAD_API_KEY';
     throw err;
   }
 
   const client = new Anthropic();
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 16000,
-    system: SYSTEM_PROMPT,
-    output_config: {
-      effort: 'medium',
-      format: { type: 'json_schema', schema: INVOICE_SCHEMA },
-    },
-    messages: [
-      {
-        role: 'user',
-        content: [
-          fileToBlock(filePath, ext),
-          { type: 'text', text: 'Extract this invoice, including every line item.' },
-        ],
+
+  let response;
+  try {
+    response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 16000,
+      system: SYSTEM_PROMPT,
+      output_config: {
+        effort: 'medium',
+        format: { type: 'json_schema', schema: INVOICE_SCHEMA },
       },
-    ],
-  });
+      messages: [
+        {
+          role: 'user',
+          content: [
+            fileToBlock(filePath, ext),
+            { type: 'text', text: 'Extract this invoice, including every line item.' },
+          ],
+        },
+      ],
+    });
+  } catch (err) {
+    // Turn SDK and network failures into something actionable.
+    if (err.status === 401 || err.status === 403) {
+      throw new Error('Anthropic rejected the API key in .env. Check that it was copied in full, or create a new one.');
+    }
+    if (err.status === 400 && /credit|balance/i.test(err.message || '')) {
+      throw new Error('Your Anthropic account is out of credit. Add credit at console.anthropic.com, then try again.');
+    }
+    if (err.status === 429) {
+      throw new Error('Too many requests at once. Wait a moment and upload again.');
+    }
+    if (err.status >= 500) {
+      throw new Error('Anthropic had a temporary problem. Try uploading again in a minute.');
+    }
+    if (/ByteString|character at index/i.test(err.message || '')) {
+      throw new Error('The API key in .env contains characters that are not valid in a key — most likely the masked dots. Create a new key and copy it with the Copy button.');
+    }
+    throw new Error(`Could not read this invoice automatically: ${err.message}`);
+  }
 
   if (response.stop_reason === 'refusal') {
     throw new Error('The extraction request was declined. Enter this invoice manually.');
@@ -116,8 +177,16 @@ async function parseWithClaude(filePath, ext) {
   }
 
   const text = response.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+  const u = response.usage || {};
+  const usage = {
+    input_tokens: (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0),
+    output_tokens: u.output_tokens || 0,
+    cost: costOf(u),
+    model: MODEL,
+  };
+
   try {
-    return JSON.parse(text);
+    return { parsed: JSON.parse(text), usage };
   } catch {
     throw new Error('Could not read the extraction result as JSON. Enter this invoice manually.');
   }
@@ -246,11 +315,19 @@ function normalize(parsed) {
   };
 }
 
+// Returns { data, usage } — usage is null for paths that cost nothing.
+const FREE = { input_tokens: 0, output_tokens: 0, cost: 0, model: null };
+
 async function parseFile(filePath, originalName) {
   const ext = path.extname(originalName || filePath).toLowerCase();
-  if (ext === '.csv' || ext === '.tsv' || ext === '.txt') return normalize(parseCsv(filePath));
-  if (ext === '.pdf' || IMAGE_TYPES[ext]) return normalize(await parseWithClaude(filePath, ext));
+  if (ext === '.csv' || ext === '.tsv' || ext === '.txt') {
+    return { data: normalize(parseCsv(filePath)), usage: FREE };
+  }
+  if (ext === '.pdf' || IMAGE_TYPES[ext]) {
+    const { parsed, usage } = await parseWithClaude(filePath, ext);
+    return { data: normalize(parsed), usage };
+  }
   throw new Error(`Unsupported file type "${ext}". Upload a PDF, an image, or a CSV.`);
 }
 
-module.exports = { parseFile, MODEL };
+module.exports = { parseFile, apiKeyProblem, costOf, PRICING, MODEL };

@@ -24,6 +24,7 @@
       <button data-view="items">Item prices</button>
       <button data-view="vendors">Vendors</button>
       <button data-view="sales">Net sales</button>
+      <button data-view="menu">Menu</button>
       <button data-view="analysis">Profit analysis</button>
     </nav>
   </header>
@@ -46,6 +47,10 @@
           <h2>Recently added</h2>
           <div id="dashboard-recent"></div>
         </div>
+      </div>
+      <div class="card">
+        <h2>What invoice reading has cost</h2>
+        <div id="dashboard-spend"></div>
       </div>
     </section>
 
@@ -160,6 +165,30 @@
       </div>
     </section>
 
+
+    <!-- MENU -->
+    <section class="view hidden" id="view-menu">
+      <div class="view-head">
+        <h1>Menu</h1>
+        <button class="btn" id="menu-new-item">Add item</button>
+        <p class="muted">Every dish and drink with its price. Edit an item when a price changes,
+          or mark it unavailable when it comes off the line.</p>
+      </div>
+
+      <div class="stat-row" id="menu-stats"></div>
+
+      <div class="filters card">
+        <label class="grow">Search <input type="search" id="menu-q" placeholder="name, Chinese name, or code — e.g. lamb, 羊肉, L2"></label>
+        <label>Section
+          <select id="menu-section-filter"><option value="">All sections</option></select>
+        </label>
+        <label class="check"><input type="checkbox" id="menu-hide-unavailable"> Hide unavailable</label>
+        <button class="btn ghost" id="menu-add-section">New section</button>
+      </div>
+
+      <div id="menu-body"></div>
+    </section>
+
     <!-- ANALYSIS -->
     <section class="view hidden" id="view-analysis">
       <div class="view-head">
@@ -249,6 +278,7 @@
           <label>Total <input type="number" step="0.01" id="ed-total"></label>
         </div>
         <p class="muted small" id="ed-balance"></p>
+        <p class="muted small" id="ed-usage"></p>
         <label class="block">Notes <textarea id="ed-notes" rows="2"></textarea></label>
       </div>
       <div class="modal-foot">
@@ -268,6 +298,42 @@
         <button class="icon-btn" id="history-close" aria-label="Close">✕</button>
       </div>
       <div class="modal-body" id="history-body"></div>
+    </div>
+  </div>
+
+
+  <!-- MENU ITEM EDITOR -->
+  <div class="modal hidden" id="menu-editor">
+    <div class="modal-card narrow">
+      <div class="modal-head">
+        <h2 id="menu-editor-title">Menu item</h2>
+        <button class="icon-btn" id="menu-editor-close" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field-grid">
+          <label>Section
+            <select id="mi-section"></select>
+          </label>
+          <label>Code <input type="text" id="mi-code" placeholder="e.g. L2"></label>
+        </div>
+        <label class="block">Name (English) <input type="text" id="mi-name" placeholder="Signature Lamb Shoulder Roll"></label>
+        <label class="block">Name (Chinese) <input type="text" id="mi-name-zh" placeholder="招牌羊肉卷"></label>
+        <div class="field-grid" style="margin-top:12px">
+          <label>Price <input type="number" step="0.01" min="0" id="mi-price"></label>
+          <label>Large / full-pot price <input type="number" step="0.01" min="0" id="mi-price-large" placeholder="optional"></label>
+        </div>
+        <label class="block">Note <input type="text" id="mi-note" placeholder="optional"></label>
+        <div class="filters inline" style="margin-top:14px">
+          <label class="check"><input type="checkbox" id="mi-new"> Mark as new</label>
+          <label class="check"><input type="checkbox" id="mi-available" checked> Available</label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn danger ghost hidden" id="mi-delete">Delete</button>
+        <span class="spacer"></span>
+        <button class="btn ghost" id="mi-cancel">Cancel</button>
+        <button class="btn" id="mi-save">Save item</button>
+      </div>
     </div>
   </div>
 

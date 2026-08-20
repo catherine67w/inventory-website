@@ -36,6 +36,16 @@ const money0 = (v) =>
 
 const pct = (v) => (v === null || v === undefined ? '—' : `${Number(v).toFixed(1)}%`);
 
+// Sub-dollar amounts read better in cents.
+const cost = (v) => {
+  const n = Number(v) || 0;
+  if (n === 0) return 'free';
+  if (n < 1) return `${(n * 100).toFixed(1)}¢`;
+  return money(n);
+};
+
+const tokens = (v) => (Number(v) || 0).toLocaleString('en-US');
+
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -131,6 +141,13 @@ loaders.dashboard = async function loadDashboard() {
     { label: 'Food cost %', value: pct(s.food_cost_pct), sub: 'food purchases ÷ net sales', cls: s.food_cost_pct !== null && s.food_cost_pct > 35 ? 'warn' : '' },
     { label: 'Gross margin', value: pct(s.gross_margin_pct), sub: 'net sales − COGS', cls: 'good' },
     { label: 'Needs review', value: String(data.pending_review), sub: 'uploaded, not approved' },
+    {
+      label: 'Invoice reading',
+      value: cost(data.usage.cost),
+      sub: data.usage.read_automatically
+        ? `${data.usage.read_automatically} read · ${cost(data.usage.average_cost)} each`
+        : 'nothing read automatically yet',
+    },
   ];
 
   $('#dashboard-stats').innerHTML = cards.map((c) => `
@@ -142,6 +159,8 @@ loaders.dashboard = async function loadDashboard() {
 
   $('#dashboard-categories').innerHTML = renderCategoryBars(s.by_category);
 
+  renderSpend();
+
   $('#dashboard-recent').innerHTML = data.recent.length ? `
     <table><tbody>${data.recent.map((r) => `
       <tr class="clickable" data-invoice="${r.id}">
@@ -151,6 +170,47 @@ loaders.dashboard = async function loadDashboard() {
       </tr>`).join('')}</tbody></table>`
     : emptyRow('No invoices yet — head to Upload to add your first one.');
 };
+
+async function renderSpend() {
+  const target = $('#dashboard-spend');
+  if (!target) return;
+  let u;
+  try {
+    u = await api('/api/usage');
+  } catch {
+    return;
+  }
+
+  const monthRows = u.by_month.filter((m) => m.read_automatically > 0);
+
+  target.innerHTML = `
+    <div class="spend-head">
+      <div>
+        <div class="spend-value">${cost(u.all_time.cost)}</div>
+        <div class="muted small">spent on invoice reading, all time</div>
+      </div>
+      <div class="spend-side">
+        <div><strong>${tokens(u.all_time.input_tokens + u.all_time.output_tokens)}</strong> tokens used</div>
+        <div class="muted small">${u.all_time.read_automatically} invoice${u.all_time.read_automatically === 1 ? '' : 's'} read automatically</div>
+      </div>
+    </div>
+    ${monthRows.length ? `
+      <table>
+        <thead><tr><th>Month</th><th class="num">Read</th><th class="num">Cost</th><th class="num">Average</th></tr></thead>
+        <tbody>${monthRows.map((m) => `
+          <tr>
+            <td>${esc(m.month)}</td>
+            <td class="num">${m.read_automatically}</td>
+            <td class="num">${cost(m.cost)}</td>
+            <td class="num">${cost(m.cost / m.read_automatically)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`
+      : '<p class="muted small">No invoices have been read automatically yet. Typed-in and CSV invoices cost nothing.</p>'}
+    <p class="muted small">Billed at $${u.pricing.input.toFixed(2)} per million tokens in and
+      $${u.pricing.output.toFixed(2)} per million out, on ${esc(u.model)}. These are the real
+      figures Anthropic reported, not estimates.</p>`;
+}
 
 function renderCategoryBars(rows) {
   if (!rows.length) return emptyRow('No purchases in this period.');
@@ -208,6 +268,11 @@ function renderDrafts() {
   $('#draft-list').innerHTML = state.drafts.map((d, i) => {
     const p = d.parsed;
     const itemCount = p.items.length;
+    const u = d.usage || {};
+    const costLine = u.cost > 0
+      ? `<span class="draft-cost" title="${tokens(u.input_tokens)} tokens in, ${tokens(u.output_tokens)} out">
+           read for ${cost(u.cost)}</span>`
+      : '';
     return `
       <div class="draft ${d.error ? 'failed' : ''}">
         <div class="draft-head">
@@ -218,6 +283,7 @@ function renderDrafts() {
             · ${itemCount} line item${itemCount === 1 ? '' : 's'}
             · ${money(p.total)}
           </span>
+          ${costLine}
           <div class="draft-actions">
             <button class="btn small" data-draft-review="${i}">Review &amp; save</button>
             <button class="btn small ghost" data-draft-discard="${i}">Discard</button>
@@ -233,7 +299,12 @@ $('#draft-list').addEventListener('click', (e) => {
   const discard = e.target.closest('[data-draft-discard]');
   if (review) {
     const draft = state.drafts[Number(review.dataset.draftReview)];
-    openEditor({ ...draft.parsed, source_file: draft.file, _draftIndex: Number(review.dataset.draftReview) });
+    openEditor({
+      ...draft.parsed,
+      source_file: draft.file,
+      usage: draft.usage,
+      _draftIndex: Number(review.dataset.draftReview),
+    });
   }
   if (discard) {
     state.drafts.splice(Number(discard.dataset.draftDiscard), 1);
@@ -497,6 +568,179 @@ $('#sales-table').addEventListener('click', async (e) => {
   loaders.sales();
 });
 
+
+/* ---------- menu ---------- */
+
+state.menu = { sections: [], summary: null };
+
+loaders.menu = async function loadMenu() {
+  const data = await api('/api/menu');
+  state.menu = data;
+
+  const s = data.summary;
+  $('#menu-stats').innerHTML = [
+    { label: 'Items on the menu', value: String(s.items), sub: `${s.sections} sections` },
+    { label: 'Cheapest', value: money(s.cheapest), sub: 'lowest priced item' },
+    { label: 'Dearest', value: money(s.dearest), sub: 'highest priced item' },
+    { label: 'Average price', value: money(s.average), sub: 'across all items' },
+    { label: 'Unavailable', value: String(s.unavailable), sub: 'marked off the menu', cls: s.unavailable ? 'warn' : '' },
+  ].map((c) => `
+    <div class="stat ${c.cls || ''}">
+      <div class="label">${esc(c.label)}</div>
+      <div class="value">${esc(c.value)}</div>
+      <div class="sub">${esc(c.sub)}</div>
+    </div>`).join('');
+
+  const filter = $('#menu-section-filter');
+  const chosen = filter.value;
+  filter.innerHTML = '<option value="">All sections</option>' +
+    data.sections.map((sec) => `<option value="${sec.id}">${esc(sec.name)}</option>`).join('');
+  filter.value = chosen;
+
+  renderMenu();
+};
+
+function renderMenu() {
+  const q = $('#menu-q').value.trim().toLowerCase();
+  const sectionId = $('#menu-section-filter').value;
+  const hideUnavailable = $('#menu-hide-unavailable').checked;
+
+  const matches = (item) => {
+    if (hideUnavailable && !item.available) return false;
+    if (!q) return true;
+    return `${item.code} ${item.name} ${item.name_zh} ${item.note}`.toLowerCase().includes(q);
+  };
+
+  const sections = state.menu.sections
+    .filter((sec) => !sectionId || String(sec.id) === sectionId)
+    .map((sec) => ({ ...sec, items: sec.items.filter(matches) }))
+    .filter((sec) => sec.items.length);
+
+  const shown = sections.reduce((n, sec) => n + sec.items.length, 0);
+
+  $('#menu-body').innerHTML = sections.length ? `
+    ${q || sectionId || hideUnavailable
+      ? `<p class="muted small">Showing ${shown} item${shown === 1 ? '' : 's'}.</p>` : ''}
+    ${sections.map((sec) => `
+      <div class="card menu-section">
+        <div class="menu-section-head">
+          <h2>${esc(sec.name)} ${sec.name_zh ? `<span class="zh">${esc(sec.name_zh)}</span>` : ''}</h2>
+          <span class="muted small">${sec.items.length} item${sec.items.length === 1 ? '' : 's'}</span>
+        </div>
+        ${sec.note ? `<p class="muted small">${esc(sec.note)}</p>` : ''}
+        <div class="menu-grid">
+          ${sec.items.map((item) => `
+            <div class="menu-item ${item.available ? '' : 'off'}" data-menu-item="${item.id}" title="Click to edit">
+              <div class="mi-main">
+                ${item.code ? `<span class="mi-code">${esc(item.code)}</span>` : ''}
+                <span class="mi-name">${esc(item.name)}</span>
+                ${item.is_new ? '<span class="mi-tag">New</span>' : ''}
+                ${item.available ? '' : '<span class="mi-tag off">Unavailable</span>'}
+              </div>
+              ${item.name_zh ? `<div class="mi-zh">${esc(item.name_zh)}</div>` : ''}
+              ${item.note ? `<div class="mi-note">${esc(item.note)}</div>` : ''}
+              <div class="mi-price">${money(item.price)}${
+                item.price_large ? ` <span class="mi-alt">/ ${money(item.price_large)}</span>` : ''}</div>
+            </div>`).join('')}
+        </div>
+      </div>`).join('')}`
+    : emptyRow(q || sectionId ? 'Nothing on the menu matches that.' : 'The menu is empty. Add an item to start.');
+}
+
+['#menu-q', '#menu-section-filter', '#menu-hide-unavailable'].forEach((sel) =>
+  $(sel).addEventListener('input', renderMenu));
+
+$('#menu-body').addEventListener('click', (e) => {
+  const el = e.target.closest('[data-menu-item]');
+  if (!el) return;
+  const id = Number(el.dataset.menuItem);
+  for (const sec of state.menu.sections) {
+    const item = sec.items.find((i) => i.id === id);
+    if (item) return openMenuItem(item);
+  }
+});
+
+$('#menu-new-item').addEventListener('click', () => openMenuItem(null));
+
+$('#menu-add-section').addEventListener('click', async () => {
+  const name = prompt('Section name (English)');
+  if (!name) return;
+  const nameZh = prompt('Section name (Chinese, optional)', '') ?? '';
+  try {
+    await api('/api/menu/sections', { method: 'POST', body: JSON.stringify({ name, name_zh: nameZh }) });
+    toast('Section added.');
+    loaders.menu();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+function openMenuItem(item) {
+  state.menuItem = item;
+  $('#menu-editor-title').textContent = item ? (item.name || 'Menu item') : 'New menu item';
+  $('#mi-section').innerHTML = state.menu.sections
+    .map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  $('#mi-section').value = item ? item.section_id : (state.menu.sections[0]?.id || '');
+  $('#mi-code').value = item ? item.code : '';
+  $('#mi-name').value = item ? item.name : '';
+  $('#mi-name-zh').value = item ? item.name_zh : '';
+  $('#mi-price').value = item ? item.price : '';
+  $('#mi-price-large').value = item && item.price_large != null ? item.price_large : '';
+  $('#mi-note').value = item ? item.note : '';
+  $('#mi-new').checked = Boolean(item && item.is_new);
+  $('#mi-available').checked = item ? Boolean(item.available) : true;
+  $('#mi-delete').classList.toggle('hidden', !item);
+  $('#menu-editor').classList.remove('hidden');
+}
+
+function closeMenuItem() {
+  $('#menu-editor').classList.add('hidden');
+  state.menuItem = null;
+}
+
+$('#menu-editor-close').addEventListener('click', closeMenuItem);
+$('#mi-cancel').addEventListener('click', closeMenuItem);
+$('#menu-editor').addEventListener('click', (e) => {
+  if (e.target === $('#menu-editor')) closeMenuItem();
+});
+
+$('#mi-save').addEventListener('click', async () => {
+  const payload = {
+    section_id: Number($('#mi-section').value),
+    code: $('#mi-code').value.trim(),
+    name: $('#mi-name').value.trim(),
+    name_zh: $('#mi-name-zh').value.trim(),
+    price: $('#mi-price').value || 0,
+    price_large: $('#mi-price-large').value,
+    note: $('#mi-note').value.trim(),
+    is_new: $('#mi-new').checked,
+    available: $('#mi-available').checked,
+  };
+  if (!payload.name) return toast('Give the item a name.', true);
+
+  try {
+    if (state.menuItem) {
+      await api('/api/menu/items/' + state.menuItem.id, { method: 'PUT', body: JSON.stringify(payload) });
+    } else {
+      await api('/api/menu/items', { method: 'POST', body: JSON.stringify(payload) });
+    }
+    toast('Menu item saved.');
+    closeMenuItem();
+    loaders.menu();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+$('#mi-delete').addEventListener('click', async () => {
+  if (!state.menuItem) return;
+  if (!confirm(`Remove "${state.menuItem.name}" from the menu?`)) return;
+  await api('/api/menu/items/' + state.menuItem.id, { method: 'DELETE' });
+  toast('Item removed.');
+  closeMenuItem();
+  loaders.menu();
+});
+
 /* ---------- invoice editor ---------- */
 
 function categoryOptions(selected) {
@@ -566,8 +810,19 @@ function openEditor(data) {
     id: base.id || null,
     source_file: base.source_file || '',
     draftIndex: base._draftIndex ?? null,
+    // Usage arrives on a draft; on a saved invoice it comes back as columns.
+    usage: base.usage || {
+      input_tokens: base.input_tokens || 0,
+      output_tokens: base.output_tokens || 0,
+      cost: base.extraction_cost || 0,
+    },
     items: (base.items || []).map((i) => ({ ...i })),
   };
+
+  const u = state.editor.usage;
+  $('#ed-usage').textContent = u && u.cost > 0
+    ? `Read automatically for ${cost(u.cost)} — ${tokens(u.input_tokens)} tokens in, ${tokens(u.output_tokens)} out.`
+    : '';
 
   $('#editor-title').textContent = base.id ? `Invoice ${base.invoice_number || base.id}` : 'New invoice';
   $('#ed-vendor').value = base.vendor_name || '';
@@ -660,6 +915,7 @@ $('#ed-save').addEventListener('click', async () => {
     total: $('#ed-total').value,
     notes: $('#ed-notes').value,
     source_file: state.editor.source_file,
+    usage: state.editor.usage,
     items: readEditorLines(),
   };
 
@@ -910,9 +1166,23 @@ $('#signout-btn').addEventListener('click', async () => {
   } catch {
     /* fall through to defaults */
   }
-  $('#extraction-status').textContent = state.meta.extraction.enabled
-    ? `automatic extraction on · ${state.meta.extraction.model}`
-    : 'automatic extraction off — add an API key to .env';
+  const status = $('#extraction-status');
+  if (state.meta.extraction.enabled) {
+    status.textContent = `automatic extraction on · ${state.meta.extraction.model}`;
+    status.title = '';
+  } else {
+    status.textContent = 'automatic reading off — hover for why';
+    status.title = state.meta.extraction.problem || 'No API key configured.';
+
+    // Say so on the Upload tab too, before they spend time dragging files in.
+    const notice = document.createElement('div');
+    notice.className = 'card notice';
+    notice.innerHTML = `<strong>Automatic reading is off.</strong>
+      <p class="muted small">${esc(state.meta.extraction.problem || '')}</p>
+      <p class="muted small">CSV files still import normally, and you can enter invoices by hand below.
+      PDFs and photos will upload but their line items will not be filled in.</p>`;
+    $('#dropzone').before(notice);
+  }
 
   const [from, to] = presetRange('mtd');
   $('#an-from').value = from;

@@ -7,7 +7,7 @@ const express = require('express');
 const multer = require('multer');
 
 const { db, vendorId } = require('./db');
-const { parseFile, MODEL } = require('./parse');
+const { parseFile, apiKeyProblem, PRICING, MODEL } = require('./parse');
 const { CATEGORIES, GROUPS, NAMES, groupOf } = require('./categories');
 
 const app = express();
@@ -110,10 +110,11 @@ const money = (v) => Math.round((Number(v) || 0) * 100) / 100;
 // --- reference data -------------------------------------------------------
 
 app.get('/api/meta', (req, res) => {
+  const problem = apiKeyProblem();
   res.json({
     categories: CATEGORIES,
     groups: GROUPS,
-    extraction: { enabled: Boolean(process.env.ANTHROPIC_API_KEY), model: MODEL },
+    extraction: { enabled: !problem, problem, model: MODEL },
   });
 });
 
@@ -204,6 +205,7 @@ function writeInvoice(payload, id = null) {
     ? money(payload.total)
     : money(subtotal + tax + freight - discount);
 
+  const usage = payload.usage || {};
   const fields = {
     vendor_id: vid,
     invoice_number: String(payload.invoice_number || ''),
@@ -213,6 +215,9 @@ function writeInvoice(payload, id = null) {
     status: payload.status === 'approved' ? 'approved' : 'review',
     source_file: String(payload.source_file || ''),
     notes: String(payload.notes || ''),
+    input_tokens: Math.max(0, Math.round(Number(usage.input_tokens) || 0)),
+    output_tokens: Math.max(0, Math.round(Number(usage.output_tokens) || 0)),
+    extraction_cost: Math.max(0, Number(usage.cost) || 0),
   };
 
   const run = db.transaction(() => {
@@ -228,9 +233,11 @@ function writeInvoice(payload, id = null) {
     } else {
       invoiceId = db.prepare(`
         INSERT INTO invoices (vendor_id, invoice_number, invoice_date, due_date, subtotal, tax, freight,
-                              discount, total, status, source_file, notes)
+                              discount, total, status, source_file, notes,
+                              input_tokens, output_tokens, extraction_cost)
         VALUES (@vendor_id, @invoice_number, @invoice_date, @due_date, @subtotal, @tax, @freight,
-                @discount, @total, @status, @source_file, @notes)
+                @discount, @total, @status, @source_file, @notes,
+                @input_tokens, @output_tokens, @extraction_cost)
       `).run(fields).lastInsertRowid;
     }
 
@@ -298,9 +305,12 @@ app.post('/api/upload', upload.array('files', 20), wrap(async (req, res) => {
   for (const file of files) {
     const entry = { file: file.filename, original_name: file.originalname };
     try {
-      entry.parsed = await parseFile(file.path, file.originalname);
+      const { data, usage } = await parseFile(file.path, file.originalname);
+      entry.parsed = data;
+      entry.usage = usage;
     } catch (err) {
       entry.error = err.message;
+      entry.usage = { input_tokens: 0, output_tokens: 0, cost: 0, model: null };
       entry.parsed = {
         vendor_name: '', invoice_number: '', invoice_date: '', due_date: '',
         subtotal: 0, tax: 0, freight: 0, discount: 0, total: 0, items: [],
@@ -388,6 +398,153 @@ app.get('/api/items/history', (req, res) => {
     WHERE it.description = ?
     ORDER BY i.invoice_date DESC, i.id DESC
   `).all(description));
+});
+
+
+// --- menu -----------------------------------------------------------------
+
+app.get('/api/menu', (req, res) => {
+  const sections = db.prepare(
+    'SELECT * FROM menu_sections ORDER BY sort_order, id').all();
+  const items = db.prepare(
+    'SELECT * FROM menu_items ORDER BY sort_order, id').all();
+
+  const bySection = new Map(sections.map((s) => [s.id, { ...s, items: [] }]));
+  for (const item of items) {
+    const section = bySection.get(item.section_id);
+    if (section) section.items.push(item);
+  }
+
+  const list = [...bySection.values()];
+  const prices = items.filter((i) => i.price > 0).map((i) => i.price);
+  res.json({
+    sections: list,
+    summary: {
+      sections: list.length,
+      items: items.length,
+      unavailable: items.filter((i) => !i.available).length,
+      cheapest: prices.length ? Math.min(...prices) : 0,
+      dearest: prices.length ? Math.max(...prices) : 0,
+      average: prices.length ? money(prices.reduce((a, b) => a + b, 0) / prices.length) : 0,
+    },
+  });
+});
+
+app.post('/api/menu/sections', (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'A section name is required.' });
+  if (db.prepare('SELECT 1 FROM menu_sections WHERE name = ?').get(name)) {
+    return res.status(409).json({ error: 'A section with that name already exists.' });
+  }
+  const next = db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM menu_sections').get().n;
+  const id = db.prepare('INSERT INTO menu_sections (name, name_zh, note, sort_order) VALUES (?, ?, ?, ?)')
+    .run(name, String(req.body.name_zh || ''), String(req.body.note || ''), next).lastInsertRowid;
+  res.json(db.prepare('SELECT * FROM menu_sections WHERE id = ?').get(id));
+});
+
+app.delete('/api/menu/sections/:id', (req, res) => {
+  const row = db.prepare('SELECT * FROM menu_sections WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Section not found.' });
+  const items = db.prepare('SELECT COUNT(*) AS n FROM menu_items WHERE section_id = ?').get(row.id).n;
+  if (items > 0 && req.query.force !== '1') {
+    return res.status(409).json({ error: `That section still has ${items} item${items === 1 ? '' : 's'}.` });
+  }
+  db.prepare('DELETE FROM menu_sections WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
+
+function itemFields(body) {
+  const price = money(body.price);
+  const large = body.price_large === '' || body.price_large === null || body.price_large === undefined
+    ? null : money(body.price_large);
+  return {
+    code: String(body.code || '').trim(),
+    name: String(body.name || '').trim(),
+    name_zh: String(body.name_zh || '').trim(),
+    price,
+    price_large: large,
+    note: String(body.note || '').trim(),
+    is_new: body.is_new ? 1 : 0,
+    available: body.available === false || body.available === 0 ? 0 : 1,
+  };
+}
+
+app.post('/api/menu/items', (req, res) => {
+  const fields = itemFields(req.body);
+  if (!fields.name) return res.status(400).json({ error: 'An item name is required.' });
+  const section = db.prepare('SELECT id FROM menu_sections WHERE id = ?').get(req.body.section_id);
+  if (!section) return res.status(400).json({ error: 'Pick a section for this item.' });
+
+  const next = db.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM menu_items WHERE section_id = ?').get(section.id).n;
+  const id = db.prepare(`
+    INSERT INTO menu_items (section_id, code, name, name_zh, price, price_large, note, is_new, available, sort_order)
+    VALUES (@section_id, @code, @name, @name_zh, @price, @price_large, @note, @is_new, @available, @sort_order)
+  `).run({ ...fields, section_id: section.id, sort_order: next }).lastInsertRowid;
+  res.json(db.prepare('SELECT * FROM menu_items WHERE id = ?').get(id));
+});
+
+app.put('/api/menu/items/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM menu_items WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Item not found.' });
+  const fields = itemFields({ ...existing, ...req.body });
+  if (!fields.name) return res.status(400).json({ error: 'An item name is required.' });
+  const sectionId = req.body.section_id || existing.section_id;
+
+  db.prepare(`
+    UPDATE menu_items SET section_id=@section_id, code=@code, name=@name, name_zh=@name_zh,
+      price=@price, price_large=@price_large, note=@note, is_new=@is_new, available=@available
+    WHERE id=@id
+  `).run({ ...fields, section_id: sectionId, id: existing.id });
+  res.json(db.prepare('SELECT * FROM menu_items WHERE id = ?').get(existing.id));
+});
+
+app.delete('/api/menu/items/:id', (req, res) => {
+  const info = db.prepare('DELETE FROM menu_items WHERE id = ?').run(req.params.id);
+  if (!info.changes) return res.status(404).json({ error: 'Item not found.' });
+  res.json({ ok: true });
+});
+
+// --- extraction spend -----------------------------------------------------
+
+function usageTotals(from, to) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(extraction_cost), 0) AS cost,
+           COALESCE(SUM(input_tokens), 0)    AS input_tokens,
+           COALESCE(SUM(output_tokens), 0)   AS output_tokens,
+           COUNT(*)                          AS invoices,
+           SUM(CASE WHEN extraction_cost > 0 THEN 1 ELSE 0 END) AS read_automatically
+    FROM invoices WHERE invoice_date BETWEEN @from AND @to
+  `).get({ from, to });
+  return {
+    from, to,
+    cost: Math.round(row.cost * 1e6) / 1e6,
+    input_tokens: row.input_tokens,
+    output_tokens: row.output_tokens,
+    invoices: row.invoices,
+    read_automatically: row.read_automatically || 0,
+    average_cost: row.read_automatically ? row.cost / row.read_automatically : 0,
+  };
+}
+
+app.get('/api/usage', (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const from = req.query.from || today.slice(0, 8) + '01';
+  const to = req.query.to || today;
+  const byMonth = db.prepare(`
+    SELECT substr(invoice_date, 1, 7) AS month,
+           COALESCE(SUM(extraction_cost), 0) AS cost,
+           SUM(CASE WHEN extraction_cost > 0 THEN 1 ELSE 0 END) AS read_automatically
+    FROM invoices
+    GROUP BY month ORDER BY month DESC LIMIT 12
+  `).all();
+  res.json({
+    period: usageTotals(from, to),
+    all_time: usageTotals('0000-01-01', '9999-12-31'),
+    by_month: byMonth.map((m) => ({ ...m, cost: Math.round(m.cost * 1e6) / 1e6 })),
+    pricing: PRICING,
+    model: MODEL,
+  });
 });
 
 // --- analytics ------------------------------------------------------------
@@ -529,7 +686,13 @@ app.get('/api/dashboard', (req, res) => {
     FROM invoices i JOIN vendors v ON v.id = i.vendor_id
     ORDER BY i.created_at DESC LIMIT 8
   `).all();
-  res.json({ period: { from: monthStart, to: today }, stats, pending_review: pending, recent });
+  res.json({
+    period: { from: monthStart, to: today },
+    stats,
+    pending_review: pending,
+    recent,
+    usage: usageTotals(monthStart, today),
+  });
 });
 
 // --- errors ---------------------------------------------------------------
