@@ -599,6 +599,135 @@ app.delete('/api/menu/items/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+
+// --- recipe links: purchased ingredients -> menu items --------------------
+
+// Most recent unit price paid for a purchased item, whichever vendor it came
+// from. Returns null when we have never bought it.
+const latestPriceStmt = db.prepare(`
+  SELECT it.unit_price, it.unit, i.invoice_date, v.name AS vendor_name
+  FROM invoice_items it
+  JOIN invoices i ON i.id = it.invoice_id
+  JOIN vendors  v ON v.id = i.vendor_id
+  WHERE it.description = ?
+  ORDER BY i.invoice_date DESC, i.id DESC
+  LIMIT 1
+`);
+
+// Works out what one plate costs, and what that leaves against the menu price.
+function costMenuItem(item) {
+  const ingredients = db.prepare(
+    'SELECT * FROM menu_item_ingredients WHERE menu_item_id = ? ORDER BY id').all(item.id);
+
+  let cost = 0;
+  let priced = 0;
+  const detailed = ingredients.map((row) => {
+    const latest = latestPriceStmt.get(row.description);
+    const lineCost = latest ? money(latest.unit_price * row.quantity) : null;
+    if (lineCost !== null) { cost += lineCost; priced += 1; }
+    return {
+      ...row,
+      latest_unit_price: latest ? latest.unit_price : null,
+      purchased_unit: latest ? latest.unit : '',
+      last_bought: latest ? latest.invoice_date : null,
+      vendor_name: latest ? latest.vendor_name : null,
+      line_cost: lineCost,
+    };
+  });
+
+  cost = money(cost);
+  const complete = ingredients.length > 0 && priced === ingredients.length;
+  const price = item.price || 0;
+
+  return {
+    ingredients: detailed,
+    costing: {
+      ingredient_count: ingredients.length,
+      priced_count: priced,
+      complete,
+      cost,
+      // Only meaningful once every ingredient has a price behind it.
+      food_cost_pct: complete && price > 0 ? +((cost / price) * 100).toFixed(1) : null,
+      margin: complete && price > 0 ? money(price - cost) : null,
+      margin_pct: complete && price > 0 ? +(((price - cost) / price) * 100).toFixed(1) : null,
+    },
+  };
+}
+
+app.get('/api/menu/items/:id', (req, res) => {
+  const item = db.prepare('SELECT * FROM menu_items WHERE id = ?').get(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Menu item not found.' });
+  const section = db.prepare('SELECT name FROM menu_sections WHERE id = ?').get(item.section_id);
+  res.json({ ...item, section_name: section ? section.name : '', ...costMenuItem(item) });
+});
+
+app.post('/api/menu/items/:id/ingredients', (req, res) => {
+  const item = db.prepare('SELECT * FROM menu_items WHERE id = ?').get(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Menu item not found.' });
+
+  const description = String(req.body.description || '').trim();
+  if (!description) return res.status(400).json({ error: 'Pick a purchased item to add.' });
+
+  const already = db.prepare(
+    'SELECT 1 FROM menu_item_ingredients WHERE menu_item_id = ? AND description = ?')
+    .get(item.id, description);
+  if (already) {
+    return res.status(409).json({ error: `"${description}" is already on this menu item.` });
+  }
+
+  db.prepare(`
+    INSERT INTO menu_item_ingredients (menu_item_id, description, quantity, unit, note)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(item.id, description, Number(req.body.quantity) || 0,
+         String(req.body.unit || ''), String(req.body.note || ''));
+
+  res.json({ ok: true, ...costMenuItem(item) });
+});
+
+app.put('/api/menu/ingredients/:id', (req, res) => {
+  const row = db.prepare('SELECT * FROM menu_item_ingredients WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'That ingredient link is gone.' });
+  db.prepare('UPDATE menu_item_ingredients SET quantity = ?, unit = ?, note = ? WHERE id = ?')
+    .run(Number(req.body.quantity) || 0, String(req.body.unit ?? row.unit),
+         String(req.body.note ?? row.note), row.id);
+  const item = db.prepare('SELECT * FROM menu_items WHERE id = ?').get(row.menu_item_id);
+  res.json({ ok: true, ...costMenuItem(item) });
+});
+
+app.delete('/api/menu/ingredients/:id', (req, res) => {
+  const row = db.prepare('SELECT * FROM menu_item_ingredients WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'That ingredient link is gone.' });
+  db.prepare('DELETE FROM menu_item_ingredients WHERE id = ?').run(row.id);
+  const item = db.prepare('SELECT * FROM menu_items WHERE id = ?').get(row.menu_item_id);
+  res.json({ ok: true, ...costMenuItem(item) });
+});
+
+// Where is this purchased item already used? Drives the Item prices screen.
+app.get('/api/menu/usage', (req, res) => {
+  const description = String(req.query.description || '');
+  if (!description) return res.status(400).json({ error: 'A description is required.' });
+  res.json(db.prepare(`
+    SELECT mii.id, mii.quantity, mii.unit, mi.id AS menu_item_id, mi.name, mi.code, mi.price,
+           s.name AS section_name
+    FROM menu_item_ingredients mii
+    JOIN menu_items mi    ON mi.id = mii.menu_item_id
+    JOIN menu_sections s  ON s.id = mi.section_id
+    WHERE mii.description = ?
+    ORDER BY s.sort_order, mi.sort_order
+  `).all(description));
+});
+
+// Flat list for the picker, plus how many ingredients each already has.
+app.get('/api/menu/flat', (req, res) => {
+  res.json(db.prepare(`
+    SELECT mi.id, mi.code, mi.name, mi.name_zh, mi.price, s.name AS section_name,
+           (SELECT COUNT(*) FROM menu_item_ingredients x WHERE x.menu_item_id = mi.id) AS ingredient_count
+    FROM menu_items mi
+    JOIN menu_sections s ON s.id = mi.section_id
+    ORDER BY s.sort_order, mi.sort_order
+  `).all());
+});
+
 // --- extraction spend -----------------------------------------------------
 
 function usageTotals(from, to) {

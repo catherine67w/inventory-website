@@ -400,7 +400,7 @@ loaders.items = async function loadItems() {
       <thead><tr>
         <th>Product</th><th>Vendor</th><th>Unit</th><th class="num">Times bought</th>
         <th class="num">Latest price</th><th class="num">Change</th>
-        <th class="num">Low / high</th><th class="num">Total spend</th>
+        <th class="num">Low / high</th><th class="num">Total spend</th><th></th>
       </tr></thead>
       <tbody>${rows.map((r) => {
         const change = r.previous_price ? ((r.latest_price - r.previous_price) / r.previous_price) * 100 : null;
@@ -416,6 +416,7 @@ loaders.items = async function loadItems() {
           <td class="num"><span class="delta ${cls}">${arrow}</span></td>
           <td class="num">${money(r.min_price)} / ${money(r.max_price)}</td>
           <td class="num">${money(r.total_spend)}</td>
+          <td class="num"><button class="btn small ghost" data-link-item="${esc(r.description)}" data-link-unit="${esc(r.unit || '')}">Add to menu</button></td>
         </tr>`; }).join('')}
       </tbody>
     </table></div>`
@@ -426,6 +427,13 @@ $('#item-apply').addEventListener('click', loaders.items);
 $('#item-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') loaders.items(); });
 
 $('#items-table').addEventListener('click', async (e) => {
+  const linkBtn = e.target.closest('[data-link-item]');
+  if (linkBtn) {
+    e.stopPropagation();
+    openLinkEditor(linkBtn.dataset.linkItem, linkBtn.dataset.linkUnit);
+    return;
+  }
+
   const row = e.target.closest('[data-item]');
   if (!row) return;
   const description = row.dataset.item;
@@ -691,6 +699,7 @@ function openMenuItem(item) {
   $('#mi-available').checked = item ? Boolean(item.available) : true;
   $('#mi-delete').classList.toggle('hidden', !item);
   $('#menu-editor').classList.remove('hidden');
+  renderRecipe(item ? item.id : null);
 }
 
 function closeMenuItem() {
@@ -1146,6 +1155,151 @@ $('#analysis-body').addEventListener('click', (e) => {
   if (goto) showView(goto.dataset.goto);
 });
 
+
+
+/* ---------- linking purchased items to menu items ---------- */
+
+state.link = { description: '', unit: '' };
+
+async function openLinkEditor(description, purchasedUnit) {
+  state.link = { description, unit: purchasedUnit || '' };
+
+  const [flat, usage] = await Promise.all([
+    api('/api/menu/flat'),
+    api('/api/menu/usage?description=' + encodeURIComponent(description)),
+  ]);
+
+  $('#link-ingredient').textContent = description;
+
+  $('#link-usage').innerHTML = usage.length ? `
+    <p class="muted small">Already used in ${usage.length} menu item${usage.length === 1 ? '' : 's'}:
+      ${usage.map((u) => esc((u.code ? u.code + ' ' : '') + u.name)).join(', ')}.</p>` : '';
+
+  const used = new Set(usage.map((u) => u.menu_item_id));
+  let currentSection = '';
+  let html = '';
+  for (const item of flat) {
+    if (item.section_name !== currentSection) {
+      if (currentSection) html += '</optgroup>';
+      html += `<optgroup label="${esc(item.section_name)}">`;
+      currentSection = item.section_name;
+    }
+    const label = `${item.code ? item.code + ' · ' : ''}${item.name} — ${money(item.price)}` +
+      (used.has(item.id) ? ' (already added)' : '');
+    html += `<option value="${item.id}"${used.has(item.id) ? ' disabled' : ''}>${esc(label)}</option>`;
+  }
+  if (currentSection) html += '</optgroup>';
+  $('#link-menu-item').innerHTML = html;
+
+  $('#link-qty').value = '';
+  $('#link-unit').value = purchasedUnit || '';
+  $('#link-note').value = '';
+  $('#link-hint').textContent = purchasedUnit
+    ? `You buy this by the ${purchasedUnit}. Enter how much of one ${purchasedUnit} goes into a single serving — 0.25 means a quarter.`
+    : 'Enter how much of one purchased unit goes into a single serving.';
+
+  $('#link-editor').classList.remove('hidden');
+}
+
+function closeLinkEditor() { $('#link-editor').classList.add('hidden'); }
+
+$('#link-close').addEventListener('click', closeLinkEditor);
+$('#link-cancel').addEventListener('click', closeLinkEditor);
+$('#link-editor').addEventListener('click', (e) => {
+  if (e.target === $('#link-editor')) closeLinkEditor();
+});
+
+$('#link-save').addEventListener('click', async () => {
+  const menuItemId = $('#link-menu-item').value;
+  if (!menuItemId) return toast('Pick a menu item.', true);
+  const qty = Number($('#link-qty').value) || 0;
+  if (qty <= 0 && !confirm('No quantity entered, so this will not add anything to the plate cost. Add it anyway?')) return;
+
+  try {
+    await api(`/api/menu/items/${menuItemId}/ingredients`, {
+      method: 'POST',
+      body: JSON.stringify({
+        description: state.link.description,
+        quantity: qty,
+        unit: $('#link-unit').value.trim(),
+        note: $('#link-note').value.trim(),
+      }),
+    });
+    toast('Added to the menu item.');
+    closeLinkEditor();
+    if ($('#tabs button.active').dataset.view === 'items') loaders.items();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+/* ---------- recipe panel inside the menu item editor ---------- */
+
+async function renderRecipe(menuItemId) {
+  const panel = $('#mi-recipe');
+  if (!menuItemId) {
+    panel.innerHTML = '<p class="muted small">Save this item first, then you can add ingredients to it.</p>';
+    return;
+  }
+
+  let data;
+  try {
+    data = await api('/api/menu/items/' + menuItemId);
+  } catch {
+    panel.innerHTML = '';
+    return;
+  }
+
+  const c = data.costing;
+  const priceKnown = data.price > 0;
+
+  panel.innerHTML = `
+    <h3>What this dish costs</h3>
+    ${data.ingredients.length ? `
+      <div class="table-scroll">
+        <table class="recipe-table">
+          <thead><tr>
+            <th>Purchased ingredient</th><th class="num">Qty</th><th>Unit</th>
+            <th class="num">Latest price</th><th class="num">Cost</th><th></th>
+          </tr></thead>
+          <tbody>${data.ingredients.map((ing) => `
+            <tr>
+              <td>${esc(ing.description)}
+                ${ing.last_bought ? `<div class="muted small">${esc(ing.vendor_name || '')} · ${esc(ing.last_bought)}</div>`
+                  : '<div class="muted small warn-text">never purchased — no price to cost with</div>'}</td>
+              <td class="num">${ing.quantity}</td>
+              <td>${esc(ing.unit || '')}</td>
+              <td class="num">${ing.latest_unit_price === null ? '—' : money(ing.latest_unit_price)}</td>
+              <td class="num">${ing.line_cost === null ? '—' : money(ing.line_cost)}</td>
+              <td class="num"><button class="icon-btn" data-remove-ingredient="${ing.id}" title="Remove">✕</button></td>
+            </tr>`).join('')}
+          </tbody>
+          <tfoot><tr>
+            <td colspan="4"><strong>Plate cost</strong></td>
+            <td class="num"><strong>${money(c.cost)}</strong></td><td></td>
+          </tr></tfoot>
+        </table>
+      </div>
+      ${c.complete && priceKnown ? `
+        <div class="recipe-summary">
+          <div><span class="muted small">Menu price</span><strong>${money(data.price)}</strong></div>
+          <div><span class="muted small">Food cost</span><strong class="${c.food_cost_pct > 35 ? 'warn-text' : 'ok-text'}">${c.food_cost_pct}%</strong></div>
+          <div><span class="muted small">Margin</span><strong class="ok-text">${money(c.margin)}</strong></div>
+          <div><span class="muted small">Margin %</span><strong class="ok-text">${c.margin_pct}%</strong></div>
+        </div>`
+        : `<p class="muted small">${
+            !priceKnown ? 'Set a menu price to see the margin.'
+            : `${c.ingredient_count - c.priced_count} ingredient${c.ingredient_count - c.priced_count === 1 ? ' has' : 's have'} never been purchased, so the cost is incomplete.`}</p>`}`
+      : '<p class="muted small">No ingredients linked yet. Go to <strong>Item prices</strong> and use <em>Add to menu</em> on the products that go into this dish.</p>'}`;
+}
+
+$('#mi-recipe').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-remove-ingredient]');
+  if (!btn) return;
+  await api('/api/menu/ingredients/' + btn.dataset.removeIngredient, { method: 'DELETE' });
+  toast('Ingredient removed.');
+  renderRecipe(state.menuItem ? state.menuItem.id : null);
+});
 
 /* ---------- security ---------- */
 

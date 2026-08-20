@@ -335,6 +335,38 @@ npm run disable-2fa</pre>
   </div>
 
 
+
+  <!-- ADD PURCHASED ITEM TO A MENU ITEM -->
+  <div class="modal hidden" id="link-editor">
+    <div class="modal-card narrow">
+      <div class="modal-head">
+        <h2>Add to a menu item</h2>
+        <button class="icon-btn" id="link-close" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted small">Ingredient</p>
+        <div class="link-ingredient" id="link-ingredient"></div>
+
+        <div id="link-usage"></div>
+
+        <label class="block">Menu item
+          <select id="link-menu-item"></select>
+        </label>
+        <div class="field-grid" style="margin-top:12px">
+          <label>Quantity used per serving <input type="number" step="0.001" min="0" id="link-qty" placeholder="e.g. 0.25"></label>
+          <label>Unit <input type="text" id="link-unit" placeholder="LB, CS, EA"></label>
+        </div>
+        <p class="muted small" id="link-hint"></p>
+        <label class="block">Note <input type="text" id="link-note" placeholder="optional"></label>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button class="btn ghost" id="link-cancel">Cancel</button>
+        <button class="btn" id="link-save">Add to menu item</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MENU ITEM EDITOR -->
   <div class="modal hidden" id="menu-editor">
     <div class="modal-card narrow">
@@ -360,6 +392,8 @@ npm run disable-2fa</pre>
           <label class="check"><input type="checkbox" id="mi-new"> Mark as new</label>
           <label class="check"><input type="checkbox" id="mi-available" checked> Available</label>
         </div>
+
+        <div id="mi-recipe"></div>
       </div>
       <div class="modal-foot">
         <button class="btn danger ghost hidden" id="mi-delete">Delete</button>

@@ -109,6 +109,24 @@ price — seeded from the printed menu (138 items across 16 sections).
 The seed data lives in `menu-data.js` and is loaded **only when the menu table is empty**, so
 edits made in the app are never overwritten by a restart.
 
+
+### Linking ingredients to dishes
+
+On **Item prices**, every purchased product has an **Add to menu** button. Use it to say which
+dish that ingredient goes into and how much of one purchased unit a single serving uses — `0.05`
+of a case, for example.
+
+Once a dish has ingredients linked, opening it on the **Menu** tab shows:
+
+- each ingredient with the most recent price paid, and which vendor it came from
+- the **plate cost** — what one serving costs to make
+- **food cost %**, **margin**, and **margin %** against the menu price
+
+Costs follow your invoices automatically: when a supplier raises a price, the plate cost and
+margin move with it the next time you look. If an ingredient has never appeared on an invoice
+there is no price to cost with, and the dish is marked as incomplete rather than being quietly
+undercounted.
+
 ## Profit analysis
 
 Pick **any** start and end date. The presets (this week, last week, month to date, last month,

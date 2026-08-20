@@ -84,6 +84,22 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT ''
 );
+
+-- Which purchased ingredients go into which menu item. Ingredients are matched
+-- by the description printed on the invoice, which is how the Item prices
+-- screen groups them too.
+CREATE TABLE IF NOT EXISTS menu_item_ingredients (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  menu_item_id INTEGER NOT NULL REFERENCES menu_items(id) ON DELETE CASCADE,
+  description  TEXT NOT NULL,
+  quantity     REAL NOT NULL DEFAULT 0,
+  unit         TEXT DEFAULT '',
+  note         TEXT DEFAULT '',
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_mii_menu_item ON menu_item_ingredients(menu_item_id);
+CREATE INDEX IF NOT EXISTS idx_mii_desc      ON menu_item_ingredients(description);
 `);
 
 // Columns added after the first release. Adding them here keeps existing
