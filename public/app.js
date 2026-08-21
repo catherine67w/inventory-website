@@ -208,8 +208,8 @@ async function renderSpend() {
       </table>`
       : '<p class="muted small">No invoices have been read automatically yet. Typed-in and CSV invoices cost nothing.</p>'}
     <p class="muted small">Billed at $${u.pricing.input.toFixed(2)} per million tokens in and
-      $${u.pricing.output.toFixed(2)} per million out, on ${esc(u.model)}. These are the real
-      figures Anthropic reported, not estimates.</p>`;
+      $${u.pricing.output.toFixed(2)} per million out. These are the real figures reported for
+      each invoice, not estimates.</p>`;
 }
 
 function renderCategoryBars(rows) {
@@ -1453,7 +1453,7 @@ $('#signout-btn').addEventListener('click', async () => {
   }
   const status = $('#extraction-status');
   if (state.meta.extraction.enabled) {
-    status.textContent = `automatic extraction on · ${state.meta.extraction.model}`;
+    status.textContent = 'automatic invoice reading is on';
     status.title = '';
   } else {
     status.textContent = 'automatic reading off — hover for why';
