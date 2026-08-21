@@ -19,6 +19,24 @@ Data lives in `data.db` (SQLite) next to the app, and uploaded invoice files in 
 Both are created on first run. Nothing leaves your machine except the invoice images you
 choose to have read automatically.
 
+## Starting it without the Terminal
+
+Two double-clickable files sit on the Desktop (and in this folder):
+
+| File | What it does |
+| --- | --- |
+| **Start Invoice App** | Starts the server and opens the app in your browser |
+| **Stop Invoice App** | Stops it, for when the Terminal window has been closed or lost |
+
+Starting opens a Terminal window that stays open while the app runs. **Closing that window, or
+pressing Control-C in it, stops the app** — and the app is unreachable for everyone once it does.
+
+The start file is safe to double-click twice: if the app is already running it just opens the
+browser rather than starting a second copy. On a machine that has never run it, it installs what
+it needs first.
+
+If you ever move the project folder, the path inside those files has to be updated to match.
+
 ## Turning on automatic invoice reading
 
 Copy `.env.example` to `.env` and add an Anthropic API key:
@@ -27,7 +45,7 @@ Copy `.env.example` to `.env` and add an Anthropic API key:
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Restart the server. The header will say "automatic extraction on".
+Restart the server. The header will say "automatic invoice reading is on".
 
 With a key, dropping in a **PDF or a photo** of an invoice reads the vendor, invoice number,
 dates, totals, and every line item — including a suggested GL category per item. Without a key
