@@ -189,15 +189,27 @@ total are never treated as days.
 Every figure is editable in the review table, and a row that is not a day can be removed with the
 ✕ beside it. A day the restaurant was closed is kept as a zero rather than dropped.
 
-If a summary shows **only a month total** with no day-by-day breakdown, it is offered as a single
-entry dated the last day of the period — nothing is ever split across days automatically, since
-that would be inventing figures. Note that a date range stopping short of that date will not
-include it.
+**A Toast .xlsx export can be dropped in as it comes.** Spreadsheets are read directly — exact
+figures, instantly, with no API key and no reading charge. Photos and PDFs still go through
+Claude; spreadsheets never do. A day-by-day sheet becomes one row per day; a summary sheet gives
+its period total.
+
+If a summary shows **only a month total** with no day-by-day breakdown — which is what Toast's
+Sales Summary export gives — it is offered as a single entry dated the last day of the period.
+Nothing is ever split across days automatically, since that would be inventing figures.
+
+Such an entry is stored knowing the span it covers, and that matters: **a period entry and daily
+figures for the same dates can never both be counted.** Saving days that fall inside a stored
+period says so and offers to replace it, and the same happens the other way round. The Net sales
+table marks a period entry with the range it covers.
+
+A date range that stops short of the period's last day will not include any of it, so for
+analysis inside a month, export the day-by-day report instead.
 
 **Or type one in.** The single-day form is always there and needs no API key.
 
-Reading a full month costs about 6¢, and that cost is divided across the days it produced, so the
-Dashboard spend figures stay accurate.
+Reading a full month **from a photo** costs about 6¢, divided across the days it produced so the
+Dashboard spend figures stay accurate. Reading a spreadsheet costs nothing.
 
 ## Profit analysis
 

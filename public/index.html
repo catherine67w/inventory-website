@@ -156,13 +156,16 @@
           it is read off and listed for review. The days are checked against the report's own month
           total before you save, and any day missing from the read is flagged. End-of-day reports
           work the same way.</p>
+        <p class="muted small">A <strong>Toast .xlsx export</strong> can be dropped in as it comes.
+          The figures are read straight out of the spreadsheet — exact, instant, and free, with no
+          reading charge.</p>
 
         <div class="dropzone compact" id="sales-dropzone">
-          <input type="file" id="sales-file-input" multiple accept=".pdf,.png,.jpg,.jpeg,.gif,.webp" hidden>
+          <input type="file" id="sales-file-input" multiple accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.xlsx,.xlsm" hidden>
           <div class="dropzone-inner">
             <span class="dz-icon">📈</span>
             <p><strong>Drop sales reports here</strong> or <button class="link" id="sales-browse-btn" type="button">browse files</button></p>
-            <small>Monthly summary or single day — photo, screenshot, or PDF, up to 20 files</small>
+            <small>Monthly summary or single day — photo, screenshot, PDF, or .xlsx, up to 20 files</small>
           </div>
         </div>
 

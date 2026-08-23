@@ -24,7 +24,12 @@ async function api(url, options = {}) {
     throw new Error('Signed out.');
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(data.error || `Request failed (${res.status})`);
+    // Some refusals carry detail the caller needs to act on, not just a message.
+    Object.assign(err, data);
+    throw err;
+  }
   return data;
 }
 
@@ -700,15 +705,19 @@ loaders.sales = async function loadSales() {
   $('#sales-table').innerHTML = rows.length ? `
     <div class="table-scroll"><table>
       <thead><tr><th>Date</th><th class="num">Net sales</th><th>Note</th><th></th></tr></thead>
-      <tbody>${rows.map((r) => `
+      <tbody>${rows.map((r) => {
+        // A row can stand for a whole period when the summary had no daily
+        // breakdown; saying so stops it being read as one day's takings.
+        const spans = r.period_start && r.period_start !== r.sale_date;
+        return `
         <tr>
-          <td>${esc(r.sale_date)}</td>
+          <td>${esc(r.sale_date)}${spans ? `<div class="muted small">covers ${esc(r.period_start)} →</div>` : ''}</td>
           <td class="num">${money(r.net_sales)}</td>
           <td>${esc(r.note || '')}</td>
           <td class="num"><button class="btn small ghost" data-sale-delete="${r.sale_date}">Remove</button></td>
-        </tr>`).join('')}
+        </tr>`; }).join('')}
       </tbody>
-      <tfoot><tr><td><strong>${rows.length} day${rows.length === 1 ? '' : 's'}</strong></td>
+      <tfoot><tr><td><strong>${rows.length} ${rows.some((r) => r.period_start && r.period_start !== r.sale_date) ? 'entr' + (rows.length === 1 ? 'y' : 'ies') : 'day' + (rows.length === 1 ? '' : 's')}</strong></td>
       <td class="num"><strong>${money(total)}</strong></td><td colspan="2"></td></tr></tfoot>
     </table></div>`
     : emptyRow('No net sales entered yet.');
@@ -800,7 +809,9 @@ function renderSalesDrafts() {
       <div class="draft-head">
         <strong>${esc(d.original_name)}</strong>
         <span class="draft-meta">${d.entries.length} day${d.entries.length === 1 ? '' : 's'}${span ? ` · ${esc(span)}` : ''}</span>
-        ${d.usage && d.usage.cost ? `<span class="draft-cost">read for ${cost(d.usage.cost)}</span>` : ''}
+        ${d.usage && d.usage.cost
+          ? `<span class="draft-cost">read for ${cost(d.usage.cost)}</span>`
+          : '<span class="draft-cost">read from the file — no charge</span>'}
         <div class="draft-actions">
           ${d.entries.length ? `<button class="btn small" data-sd-save="${di}">Save these days</button>` : ''}
           ${totalOnly ? `<button class="btn small" data-sd-save-period="${di}">Save as one entry</button>` : ''}
@@ -809,10 +820,16 @@ function renderSalesDrafts() {
       </div>
       ${d.reading_note ? `<p class="draft-error">${esc(d.reading_note)}</p>` : ''}
 
-      ${totalOnly ? `<p class="warn-text small">This report shows only a
-        ${esc(period.label || 'period total')} of ${money(period.net_sales)} with no day-by-day
-        breakdown. It can be stored as a single entry dated ${esc(period.end_date || 'the last day')},
-        but a date range that stops short of that day will not include any of it.</p>` : ''}
+      ${totalOnly ? `
+        <div class="sales-recon">
+          <span><strong>${money(period.net_sales)}</strong> net sales${span ? ` for ${esc(span)}` : ''}${
+            d.gross_sales ? ` · gross ${money(d.gross_sales)}` : ''}${d.tax ? ` · tax ${money(d.tax)}` : ''}</span>
+        </div>
+        <p class="warn-text small">This report gives only the period total — there is no day-by-day
+        breakdown in it, and splitting it across days would be inventing figures. It can be stored as
+        a single entry dated ${esc(period.end_date || 'the last day')}, which any date range covering
+        that day will count in full. A range that stops short of it will not include any of it.
+        For day-level analysis, export the day-by-day sales report instead.</p>` : ''}
 
       ${missing.length ? `<p class="warn-text small">${missing.length}
         day${missing.length === 1 ? '' : 's'} inside ${esc(span || 'this range')} came back with no
@@ -910,25 +927,16 @@ $('#sales-drafts').addEventListener('click', async (e) => {
     const date = p.end_date || p.start_date;
     if (!date) return toast('The report does not print a date for its total, so it cannot be stored.', true);
     if (!confirm(`Store ${money(p.net_sales)} as a single entry on ${date}?\n\nOnly a date range that includes ${date} will count it.`)) return;
-    try {
-      await api('/api/sales/batch', {
-        method: 'POST',
-        body: JSON.stringify({
-          entries: [{
-            sale_date: date,
-            net_sales: p.net_sales,
-            note: `${p.label || 'Period'} total${p.start_date ? ` for ${p.start_date} to ${p.end_date}` : ''} — no daily breakdown on the report`,
-          }],
-          cost: draft.usage ? draft.usage.cost : 0,
-          source_file: draft.file,
-        }),
-      });
-      toast('Saved as one entry.');
+    const entry = {
+      sale_date: date,
+      period_start: p.start_date || date,
+      net_sales: p.net_sales,
+      note: `${p.label === 'Net sales' ? 'Period' : (p.label || 'Period')} total${p.start_date ? ` for ${p.start_date} to ${p.end_date}` : ''} — no daily breakdown on the report`,
+    };
+    if (await saveSalesEntries([entry], draft)) {
       state.salesDrafts.splice(Number(periodBtn.dataset.sdSavePeriod), 1);
       renderSalesDrafts();
       loaders.sales();
-    } catch (err) {
-      toast(err.message, true);
     }
     return;
   }
@@ -961,19 +969,50 @@ $('#sales-drafts').addEventListener('click', async (e) => {
     `These days add up to ${money(sum)}, but the report's own total is ${money(periodTotal)} — a difference of ${money(Math.abs(diff))}.\n\nSave anyway?`
   )) return;
 
-  try {
-    const out = await api('/api/sales/batch', {
-      method: 'POST',
-      body: JSON.stringify({ entries: rows, cost: draft.usage ? draft.usage.cost : 0, source_file: draft.file }),
-    });
-    toast(`Saved ${out.saved} day${out.saved === 1 ? '' : 's'}.`);
+  if (await saveSalesEntries(rows, draft)) {
     state.salesDrafts.splice(di, 1);
     renderSalesDrafts();
     loaders.sales();
-  } catch (err) {
-    toast(err.message, true);
   }
 });
+
+// Saves reviewed rows, stopping to ask when what is already stored overlaps
+// them — a month total and that month's daily figures would otherwise both be
+// counted. Returns true when the rows were saved.
+async function saveSalesEntries(entries, draft) {
+  const body = {
+    entries,
+    cost: draft && draft.usage ? draft.usage.cost : 0,
+    source_file: draft ? draft.file : '',
+  };
+
+  try {
+    const out = await api('/api/sales/batch', { method: 'POST', body: JSON.stringify(body) });
+    toast(`Saved ${out.saved} day${out.saved === 1 ? '' : 's'}.`);
+    return true;
+  } catch (err) {
+    if (!err.conflicts) { toast(err.message, true); return false; }
+
+    const list = err.conflicts.map((c) => (c.spans
+      ? `• ${c.period_start} to ${c.sale_date} — ${money(c.net_sales)} (covers a whole period)`
+      : `• ${c.sale_date} — ${money(c.net_sales)}`)).join('\n');
+    if (!confirm(`What you are saving overlaps figures already stored:\n\n${list}\n\nKeeping both would count that money twice. Replace them with what you are saving now?`)) {
+      return false;
+    }
+
+    try {
+      const out = await api('/api/sales/batch', {
+        method: 'POST',
+        body: JSON.stringify({ ...body, replace_overlapping: true }),
+      });
+      toast(`Saved ${out.saved} day${out.saved === 1 ? '' : 's'}, replacing ${out.removed}.`);
+      return true;
+    } catch (retryErr) {
+      toast(retryErr.message, true);
+      return false;
+    }
+  }
+}
 
 $('#sales-filter').addEventListener('click', loaders.sales);
 

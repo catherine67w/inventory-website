@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 const { NAMES } = require('./categories');
+const { readWorkbook } = require('./spreadsheet');
 
 const MODEL = 'claude-opus-5';
 
@@ -443,10 +444,144 @@ async function parseSalesWithClaude(filePath, ext) {
   return { entries, period, reading_note: String(parsed.reading_note || '').trim(), usage };
 }
 
+/* ---------- sales reports that arrive as spreadsheets ---------- */
+
+// A spreadsheet already holds exact figures, so it is read here rather than
+// sent to Claude: no API key needed, nothing to misread, and no cost.
+
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+const TEXT = (cell) => (cell && typeof cell.value === 'string' ? cell.value.trim() : '');
+const NUMBER = (cell) => (cell && typeof cell.value === 'number' ? cell.value : null);
+
+// A date in a cell, however the spreadsheet chose to store it.
+function cellDate(cell) {
+  if (!cell) return '';
+  if (cell.date) return cell.date;
+  const text = TEXT(cell);
+  if (ISO.test(text)) return text;
+  const us = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (us) {
+    const year = us[3].length === 2 ? `20${us[3]}` : us[3];
+    return `${year}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`;
+  }
+  return '';
+}
+
+// Rows labelled Total, Subtotal, Week 3 and so on are summaries of other rows.
+const isTotalRow = (label) => /^(grand\s+)?(sub)?total\b|^week\s|\btotals?$/i.test(label.trim());
+
+// Day-by-day tables: a header row naming a date column and a net sales column,
+// then one row per day underneath.
+function readDailyRows(rows) {
+  for (let h = 0; h < rows.length; h++) {
+    const header = rows[h] || [];
+    const labels = header.map((c) => TEXT(c).toLowerCase());
+    const dateCol = labels.findIndex((l) => /^(business\s+)?date$|^day$|^business day$/.test(l));
+    const netCol = labels.findIndex((l) => /net\s*sales|net\s*revenue/.test(l));
+    if (dateCol < 0 || netCol < 0) continue;
+
+    const grossCol = labels.findIndex((l) => /gross\s*sales/.test(l));
+    const taxCol = labels.findIndex((l) => /^tax|tax\s*amount/.test(l));
+
+    const entries = [];
+    for (const row of rows.slice(h + 1)) {
+      const date = cellDate(row[dateCol]);
+      if (!date) {
+        // Blank rows are spacing; a labelled row ends the table.
+        if (isTotalRow(TEXT(row[dateCol]) || TEXT(row[0]))) break;
+        continue;
+      }
+      entries.push({
+        date,
+        net_sales: NUMBER(row[netCol]) || 0,
+        gross_sales: grossCol >= 0 ? NUMBER(row[grossCol]) || 0 : 0,
+        tax: taxCol >= 0 ? NUMBER(row[taxCol]) || 0 : 0,
+        note: '',
+      });
+    }
+    if (entries.length) return entries;
+  }
+  return [];
+}
+
+// A labelled figure — "Net sales | 209682.38" — taken from the first section
+// that carries it, which on a Toast summary is the revenue summary at the top.
+function labelledFigure(rows, pattern) {
+  for (const row of rows) {
+    for (let i = 0; i < row.length; i++) {
+      if (!pattern.test(TEXT(row[i]))) continue;
+      for (let j = i + 1; j < row.length; j++) {
+        const value = NUMBER(row[j]);
+        if (value !== null) return value;
+      }
+    }
+  }
+  return null;
+}
+
+// The range a summary covers, from a title cell or from the file name —
+// Toast names its exports SalesSummary_2026-07-01_2026-07-31.
+function coveredRange(rows, originalName) {
+  const haystack = [originalName || '', ...rows.slice(0, 6).flatMap((r) => r.map(TEXT))].join(' ');
+  const dates = haystack.match(/\d{4}-\d{2}-\d{2}/g) || [];
+  if (dates.length >= 2) return { start_date: dates[0], end_date: dates[1] };
+  if (dates.length === 1) return { start_date: dates[0], end_date: dates[0] };
+
+  const month = haystack.match(/\b(\d{4})-(\d{2})\b/);
+  if (month) {
+    const last = new Date(Date.UTC(Number(month[1]), Number(month[2]), 0)).getUTCDate();
+    return { start_date: `${month[1]}-${month[2]}-01`, end_date: `${month[1]}-${month[2]}-${last}` };
+  }
+  return { start_date: '', end_date: '' };
+}
+
+function parseSalesSpreadsheet(filePath, originalName) {
+  const sheets = readWorkbook(filePath);
+
+  for (const sheet of sheets) {
+    const entries = readDailyRows(sheet.rows);
+    if (entries.length) {
+      const range = coveredRange(sheet.rows, originalName);
+      return {
+        entries,
+        period: {
+          label: 'spreadsheet total',
+          ...range,
+          net_sales: labelledFigure(sheet.rows.filter((r) => isTotalRow(TEXT(r[0]))), /net\s*sales|^total$/i) || 0,
+        },
+        reading_note: '',
+        usage: { input_tokens: 0, output_tokens: 0, cost: 0 },
+      };
+    }
+  }
+
+  // No day-by-day table anywhere: this is a period summary. Take its total.
+  const rows = sheets[0].rows;
+  const net = labelledFigure(rows, /^net\s*sales$/i);
+  if (net === null) {
+    throw new Error('No net sales figure was found in this spreadsheet. Check it is a sales summary, or enter the figure by hand.');
+  }
+
+  return {
+    entries: [],
+    period: { label: 'Net sales', ...coveredRange(rows, originalName), net_sales: net },
+    gross_sales: labelledFigure(rows, /^gross\s*sales$/i) || 0,
+    tax: labelledFigure(rows, /^tax\s*amount$/i) || 0,
+    reading_note: '',
+    usage: { input_tokens: 0, output_tokens: 0, cost: 0 },
+  };
+}
+
+const SPREADSHEET_TYPES = ['.xlsx', '.xlsm'];
+
 async function parseSalesFile(filePath, originalName) {
   const ext = path.extname(originalName || filePath).toLowerCase();
+  if (SPREADSHEET_TYPES.includes(ext)) return parseSalesSpreadsheet(filePath, originalName);
+  if (ext === '.xls') {
+    throw new Error('This is an older .xls file. Open it and save it again as .xlsx, then upload that.');
+  }
   if (ext !== '.pdf' && !IMAGE_TYPES[ext]) {
-    throw new Error(`Unsupported file type "${ext}". Upload a photo, a screenshot, or a PDF.`);
+    throw new Error(`Unsupported file type "${ext}". Upload a photo, a screenshot, a PDF, or an .xlsx export.`);
   }
   return parseSalesWithClaude(filePath, ext);
 }

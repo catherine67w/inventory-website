@@ -117,9 +117,14 @@ for (const [column, definition] of [
 
 // Sales days read from an uploaded report carry their share of what the
 // reading cost, so the spend panel reflects everything, not just invoices.
+// period_start is the first day a row covers. It equals sale_date for an
+// ordinary day; on a month total taken from a summary with no daily breakdown
+// it is the first of the month, which is what stops that row from being
+// double-counted against daily figures for the same month later on.
 for (const [column, definition] of [
   ['source_file', "TEXT DEFAULT ''"],
   ['extraction_cost', 'REAL NOT NULL DEFAULT 0'],
+  ['period_start', "TEXT DEFAULT ''"],
 ]) {
   const existing = db.prepare('PRAGMA table_info(sales)').all().map((c) => c.name);
   if (!existing.includes(column)) {

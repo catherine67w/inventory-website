@@ -445,8 +445,10 @@ app.post('/api/sales', (req, res) => {
     return res.status(400).json({ error: 'A date in YYYY-MM-DD form is required.' });
   }
   db.prepare(`
-    INSERT INTO sales (sale_date, net_sales, note) VALUES (@sale_date, @net_sales, @note)
-    ON CONFLICT(sale_date) DO UPDATE SET net_sales = @net_sales, note = @note
+    INSERT INTO sales (sale_date, net_sales, note, period_start)
+    VALUES (@sale_date, @net_sales, @note, @sale_date)
+    ON CONFLICT(sale_date) DO UPDATE SET
+      net_sales = @net_sales, note = @note, period_start = @sale_date
   `).run({ sale_date: date, net_sales: money(req.body.net_sales), note: String(req.body.note || '') });
   res.json(db.prepare('SELECT * FROM sales WHERE sale_date = ?').get(date));
 });
@@ -486,7 +488,8 @@ app.post('/api/sales/upload', upload.array('files', 20), wrap(async (req, res) =
   for (const file of files) {
     const entry = { file: file.filename, original_name: file.originalname };
     try {
-      const { entries, period, reading_note, usage } = await parseSalesFile(file.path, file.originalname);
+      const { entries, period, reading_note, usage, gross_sales, tax } =
+        await parseSalesFile(file.path, file.originalname);
 
       // Flag days already recorded so nobody silently overwrites a figure.
       const existing = db.prepare('SELECT sale_date, net_sales FROM sales WHERE sale_date = ?');
@@ -495,6 +498,10 @@ app.post('/api/sales/upload', upload.array('files', 20), wrap(async (req, res) =
         return { ...e, existing_net_sales: already ? already.net_sales : null };
       });
       entry.period = period;
+      // A period summary prints gross and tax beside the net figure; they are
+      // shown for checking but never stored.
+      entry.gross_sales = gross_sales || 0;
+      entry.tax = tax || 0;
       // Calendar days in the covered range with no row of their own. On a month
       // summary these are the rows that went missing in the reading.
       entry.missing_dates = missingDates(entries, period);
@@ -524,32 +531,68 @@ app.post('/api/sales/batch', (req, res) => {
   const totalCost = Math.max(0, Number(req.body.cost) || 0);
   const sourceFile = String(req.body.source_file || '');
 
+  // A row may cover a span rather than a single day, when a summary gives only
+  // a period total. Its span is period_start .. sale_date.
+  const rows = valid.map((e) => {
+    const start = /^\d{4}-\d{2}-\d{2}$/.test(String(e.period_start || '')) ? e.period_start : e.sale_date;
+    return { ...e, period_start: start <= e.sale_date ? start : e.sale_date };
+  });
+
+  // Anything already stored that overlaps what is being saved would be counted
+  // twice — a July total sitting alongside July's daily figures doubles the
+  // month. Overlaps are reported rather than silently resolved, unless the
+  // caller has already said to replace them.
+  const stored = db.prepare(`
+    SELECT sale_date, net_sales, COALESCE(NULLIF(period_start, ''), sale_date) AS period_start
+    FROM sales
+  `).all();
+
+  const conflicts = stored.filter((s) => rows.some((r) =>
+    s.sale_date !== r.sale_date &&          // the same date simply overwrites
+    s.period_start <= r.sale_date && r.period_start <= s.sale_date));
+
+  if (conflicts.length && !req.body.replace_overlapping) {
+    return res.status(409).json({
+      error: 'overlap',
+      conflicts: conflicts.map((c) => ({
+        sale_date: c.sale_date,
+        period_start: c.period_start,
+        net_sales: c.net_sales,
+        spans: c.period_start !== c.sale_date,
+      })),
+    });
+  }
+
   // Split the reading cost across the days, giving any rounding remainder to
   // the first row so the parts always add back to exactly what was charged.
-  const share = Math.floor((totalCost / valid.length) * 1e6) / 1e6;
-  const remainder = Math.round((totalCost - share * valid.length) * 1e6) / 1e6;
+  const share = Math.floor((totalCost / rows.length) * 1e6) / 1e6;
+  const remainder = Math.round((totalCost - share * rows.length) * 1e6) / 1e6;
 
   const save = db.prepare(`
-    INSERT INTO sales (sale_date, net_sales, note, source_file, extraction_cost)
-    VALUES (@sale_date, @net_sales, @note, @source_file, @extraction_cost)
+    INSERT INTO sales (sale_date, net_sales, note, source_file, extraction_cost, period_start)
+    VALUES (@sale_date, @net_sales, @note, @source_file, @extraction_cost, @period_start)
     ON CONFLICT(sale_date) DO UPDATE SET
       net_sales = @net_sales, note = @note,
-      source_file = @source_file, extraction_cost = @extraction_cost
+      source_file = @source_file, extraction_cost = @extraction_cost,
+      period_start = @period_start
   `);
+  const drop = db.prepare('DELETE FROM sales WHERE sale_date = ?');
 
   db.transaction(() => {
-    valid.forEach((e, index) => {
+    conflicts.forEach((c) => drop.run(c.sale_date));
+    rows.forEach((e, index) => {
       save.run({
         sale_date: e.sale_date,
         net_sales: money(e.net_sales),
         note: String(e.note || ''),
         source_file: sourceFile,
         extraction_cost: index === 0 ? share + remainder : share,
+        period_start: e.period_start,
       });
     });
   })();
 
-  res.json({ ok: true, saved: valid.length });
+  res.json({ ok: true, saved: rows.length, removed: conflicts.length });
 });
 
 app.delete('/api/sales/:date', (req, res) => {
