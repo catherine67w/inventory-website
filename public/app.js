@@ -387,20 +387,52 @@ document.addEventListener('click', async (e) => {
 
 /* ---------- item prices ---------- */
 
+state.itemSort = { sort: 'total_spend', dir: 'desc' };
+
+// Header cell that sorts. Clicking the active column flips direction.
+function sortHeader(label, key, cls = '') {
+  const active = state.itemSort.sort === key;
+  const arrow = active ? (state.itemSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  return `<th class="${cls} sortable${active ? ' active' : ''}" data-sort="${key}"
+    title="Sort by ${label.toLowerCase()}">${label}${arrow}</th>`;
+}
+
 loaders.items = async function loadItems() {
   const params = new URLSearchParams();
+  params.set('sort', state.itemSort.sort);
+  params.set('dir', state.itemSort.dir);
   if ($('#item-from').value) params.set('from', $('#item-from').value);
   if ($('#item-to').value) params.set('to', $('#item-to').value);
   if ($('#item-q').value.trim()) params.set('q', $('#item-q').value.trim());
 
   const rows = await api('/api/items?' + params);
 
+  const dirLabel = state.itemSort.sort === 'total_spend'
+    ? (state.itemSort.dir === 'asc' ? 'cheapest first' : 'most expensive first')
+    : '';
+
   $('#items-table').innerHTML = rows.length ? `
+    <div class="sort-bar">
+      <span class="muted small">Sorted by
+        <strong>${esc(({
+          total_spend: 'total spend', latest_price: 'latest price',
+          purchase_count: 'times bought', description: 'product name', vendor: 'vendor',
+        })[state.itemSort.sort])}</strong>${dirLabel ? ' — ' + dirLabel : ''}</span>
+      <span class="spacer"></span>
+      <button class="btn small ghost" data-quick-sort="asc">Total spend: cheapest first</button>
+      <button class="btn small ghost" data-quick-sort="desc">Total spend: dearest first</button>
+    </div>
     <div class="table-scroll"><table>
       <thead><tr>
-        <th>Product</th><th>Vendor</th><th>Unit</th><th class="num">Times bought</th>
-        <th class="num">Latest price</th><th class="num">Change</th>
-        <th class="num">Low / high</th><th class="num">Total spend</th><th></th>
+        ${sortHeader('Product', 'description')}
+        ${sortHeader('Vendor', 'vendor')}
+        <th>Unit</th>
+        ${sortHeader('Times bought', 'purchase_count', 'num')}
+        ${sortHeader('Latest price', 'latest_price', 'num')}
+        <th class="num">Change</th>
+        <th class="num">Low / high</th>
+        ${sortHeader('Total spend', 'total_spend', 'num')}
+        <th></th>
       </tr></thead>
       <tbody>${rows.map((r) => {
         const change = r.previous_price ? ((r.latest_price - r.previous_price) / r.previous_price) * 100 : null;
@@ -424,6 +456,27 @@ loaders.items = async function loadItems() {
 };
 
 $('#item-apply').addEventListener('click', loaders.items);
+
+$('#items-table').addEventListener('click', (e) => {
+  const quick = e.target.closest('[data-quick-sort]');
+  if (quick) {
+    state.itemSort = { sort: 'total_spend', dir: quick.dataset.quickSort };
+    loaders.items();
+    return;
+  }
+
+  const th = e.target.closest('th.sortable');
+  if (!th) return;
+  const key = th.dataset.sort;
+  if (state.itemSort.sort === key) {
+    state.itemSort.dir = state.itemSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    state.itemSort.sort = key;
+    // Money and counts are most useful highest-first; names read A-Z.
+    state.itemSort.dir = (key === 'description' || key === 'vendor') ? 'asc' : 'desc';
+  }
+  loaders.items();
+});
 $('#item-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') loaders.items(); });
 
 $('#items-table').addEventListener('click', async (e) => {
@@ -514,10 +567,12 @@ $('#vendors-table').addEventListener('click', async (e) => {
 
 /* ---------- searching one vendor's items ---------- */
 
-state.vendorItems = { id: null, timer: null };
+state.vendorItems = { id: null, timer: null, sort: 'total_spend', dir: 'desc' };
 
 async function openVendorItems(vendorId) {
   state.vendorItems.id = vendorId;
+  state.vendorItems.sort = 'total_spend';
+  state.vendorItems.dir = 'desc';
   ['#vi-q', '#vi-from', '#vi-to'].forEach((s) => { $(s).value = ''; });
   $('#vi-mode').value = 'products';
   $('#vendor-items').classList.remove('hidden');
@@ -529,6 +584,8 @@ async function loadVendorItems() {
   if (!id) return;
 
   const params = new URLSearchParams();
+  params.set('sort', state.vendorItems.sort || 'total_spend');
+  params.set('dir', state.vendorItems.dir || 'desc');
   if ($('#vi-q').value.trim()) params.set('q', $('#vi-q').value.trim());
   if ($('#vi-from').value) params.set('from', $('#vi-from').value);
   if ($('#vi-to').value) params.set('to', $('#vi-to').value);
@@ -559,6 +616,12 @@ async function loadVendorItems() {
   }
 
   $('#vi-results').innerHTML = mode === 'products' ? `
+    <div class="sort-bar">
+      <span class="muted small">Total spend, ${state.vendorItems.dir === 'asc' ? 'cheapest first' : 'dearest first'}</span>
+      <span class="spacer"></span>
+      <button class="btn small ghost" data-vi-sort="asc">Cheapest first</button>
+      <button class="btn small ghost" data-vi-sort="desc">Dearest first</button>
+    </div>
     <div class="table-scroll"><table>
       <thead><tr>
         <th>Product</th><th>Category</th><th class="num">Times</th><th class="num">Qty</th>
@@ -613,6 +676,12 @@ function closeVendorItems() {
 $('#vi-close').addEventListener('click', closeVendorItems);
 $('#vi-done').addEventListener('click', closeVendorItems);
 $('#vendor-items').addEventListener('click', (e) => {
+  const sortBtn = e.target.closest('[data-vi-sort]');
+  if (sortBtn) {
+    state.vendorItems.dir = sortBtn.dataset.viSort;
+    loadVendorItems();
+    return;
+  }
   if (e.target === $('#vendor-items')) closeVendorItems();
   // Opening an invoice from here replaces this modal with the invoice editor.
   if (e.target.closest('[data-invoice]')) closeVendorItems();

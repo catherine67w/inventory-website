@@ -493,3 +493,19 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 #vi-summary p { margin: 12px 0; }
 #vi-results table { font-size: 13px; }
 #vi-results th, #vi-results td { padding: 7px 9px; }
+
+/* Sorting ---------------------------------------------------------------- */
+
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--ink); }
+th.sortable.active { color: var(--brand); }
+
+.sort-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}

@@ -213,6 +213,16 @@ app.get('/api/vendors/:id/items', (req, res) => {
   }
   const clause = where.join(' AND ');
 
+  const VENDOR_SORTS = {
+    total_spend: 'total_spend',
+    times_bought: 'times_bought',
+    description: 'it.description COLLATE NOCASE',
+    last_bought: 'last_bought',
+  };
+  const vendorColumn = VENDOR_SORTS[req.query.sort] || VENDOR_SORTS.total_spend;
+  const vendorDir = String(req.query.dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  const vendorOrder = `${vendorColumn} ${vendorDir}, it.description COLLATE NOCASE ASC`;
+
   const lines = db.prepare(`
     SELECT it.id, it.description, it.sku, it.category, it.quantity, it.unit,
            it.unit_price, it.extended_price,
@@ -236,7 +246,7 @@ app.get('/api/vendors/:id/items', (req, res) => {
     JOIN invoices i ON i.id = it.invoice_id
     WHERE ${clause}
     GROUP BY it.description, it.unit
-    ORDER BY total_spend DESC
+    ORDER BY ${vendorOrder}
   `).all(params);
 
   res.json({
@@ -455,6 +465,21 @@ app.get('/api/items', (req, res) => {
   if (req.query.to) { where.push('i.invoice_date <= @to'); params.to = req.query.to; }
   if (req.query.q) { where.push('it.description LIKE @q'); params.q = `%${req.query.q}%`; }
 
+  // Sorting happens in SQL rather than in the browser: the query is capped at
+  // 400 rows, so sorting client-side would only reorder the top 400 by spend
+  // and "cheapest first" would show the wrong products entirely.
+  const SORTS = {
+    total_spend: 'total_spend',
+    latest_price: 'latest_price',
+    purchase_count: 'purchase_count',
+    description: 'it.description COLLATE NOCASE',
+    vendor: 'v.name COLLATE NOCASE',
+  };
+  const column = SORTS[req.query.sort] || SORTS.total_spend;
+  const direction = String(req.query.dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  // A stable tiebreak keeps rows from shuffling between identical values.
+  const orderBy = `${column} ${direction}, it.description COLLATE NOCASE ASC`;
+
   res.json(db.prepare(`
     SELECT it.description, v.name AS vendor_name, it.unit,
            COUNT(*)                          AS purchase_count,
@@ -478,7 +503,7 @@ app.get('/api/items', (req, res) => {
     JOIN vendors  v ON v.id = i.vendor_id
     WHERE ${where.join(' AND ')}
     GROUP BY it.description, v.id, it.unit
-    ORDER BY total_spend DESC
+    ORDER BY ${orderBy}
     LIMIT 400
   `).all(params));
 });
