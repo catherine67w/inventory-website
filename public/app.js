@@ -190,8 +190,9 @@ async function renderSpend() {
         <div class="muted small">spent on invoice reading, all time</div>
       </div>
       <div class="spend-side">
-        <div><strong>${tokens(u.all_time.input_tokens + u.all_time.output_tokens)}</strong> tokens used</div>
-        <div class="muted small">${u.all_time.read_automatically} invoice${u.all_time.read_automatically === 1 ? '' : 's'} read automatically</div>
+        <div><strong>${u.all_time.read_automatically}</strong> invoice${u.all_time.read_automatically === 1 ? '' : 's'} read
+          ${u.all_time.sales_cost ? `· <strong>${u.all_time.sales_days_read}</strong> sales day${u.all_time.sales_days_read === 1 ? '' : 's'} read` : ''}</div>
+        <div class="muted small">${cost(u.all_time.invoice_cost)} invoices${u.all_time.sales_cost ? ` · ${cost(u.all_time.sales_cost)} sales reports` : ''}</div>
       </div>
     </div>
     ${monthRows.length ? `
@@ -729,25 +730,135 @@ $('#sales-form').addEventListener('submit', async (e) => {
   loaders.sales();
 });
 
-$('#sales-bulk-save').addEventListener('click', async () => {
-  const lines = $('#sales-bulk').value.split('\n').map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return;
-  let saved = 0;
-  const failed = [];
-  for (const line of lines) {
-    const [date, amount, ...rest] = line.split(',').map((p) => p.trim());
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '') || amount === undefined) { failed.push(line); continue; }
-    try {
-      await api('/api/sales', {
-        method: 'POST',
-        body: JSON.stringify({ sale_date: date, net_sales: amount, note: rest.join(', ') }),
-      });
-      saved++;
-    } catch { failed.push(line); }
+
+/* ---------- uploading sales reports ---------- */
+
+state.salesDrafts = [];
+
+const salesDrop = $('#sales-dropzone');
+const salesInput = $('#sales-file-input');
+
+$('#sales-browse-btn').addEventListener('click', () => salesInput.click());
+salesInput.addEventListener('change', () => {
+  if (salesInput.files.length) uploadSalesReports(salesInput.files);
+});
+
+['dragenter', 'dragover'].forEach((ev) =>
+  salesDrop.addEventListener(ev, (e) => { e.preventDefault(); salesDrop.classList.add('drag'); }));
+['dragleave', 'drop'].forEach((ev) =>
+  salesDrop.addEventListener(ev, (e) => { e.preventDefault(); salesDrop.classList.remove('drag'); }));
+salesDrop.addEventListener('drop', (e) => {
+  if (e.dataTransfer.files.length) uploadSalesReports(e.dataTransfer.files);
+});
+
+async function uploadSalesReports(fileList) {
+  const form = new FormData();
+  Array.from(fileList).slice(0, 20).forEach((f) => form.append('files', f));
+
+  $('#sales-progress').classList.remove('hidden');
+  $('#sales-progress-note').textContent =
+    `Reading ${fileList.length} report${fileList.length === 1 ? '' : 's'}…`;
+
+  try {
+    const data = await api('/api/sales/upload', { method: 'POST', body: form });
+    state.salesDrafts = data.results.concat(state.salesDrafts);
+    renderSalesDrafts();
+    const days = data.results.reduce((n, r) => n + r.entries.length, 0);
+    toast(`Found ${days} day${days === 1 ? '' : 's'}. Check the figures, then save.`);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    $('#sales-progress').classList.add('hidden');
+    salesInput.value = '';
   }
-  $('#sales-bulk').value = failed.join('\n');
-  toast(failed.length ? `Saved ${saved}; ${failed.length} line(s) left in the box to fix.` : `Saved ${saved} days.`, failed.length > 0);
-  loaders.sales();
+}
+
+function renderSalesDrafts() {
+  $('#sales-drafts').innerHTML = state.salesDrafts.map((d, di) => {
+    if (d.error) {
+      return `<div class="draft failed">
+        <div class="draft-head">
+          <strong>${esc(d.original_name)}</strong>
+          <div class="draft-actions">
+            <button class="btn small ghost" data-sd-discard="${di}">Discard</button>
+          </div>
+        </div>
+        <div class="draft-error">${esc(d.error)}</div>
+      </div>`;
+    }
+
+    const total = d.entries.reduce((s, e) => s + e.net_sales, 0);
+    return `<div class="draft">
+      <div class="draft-head">
+        <strong>${esc(d.original_name)}</strong>
+        <span class="draft-meta">${d.entries.length} day${d.entries.length === 1 ? '' : 's'} · ${money(total)}</span>
+        ${d.usage && d.usage.cost ? `<span class="draft-cost">read for ${cost(d.usage.cost)}</span>` : ''}
+        <div class="draft-actions">
+          <button class="btn small" data-sd-save="${di}">Save these days</button>
+          <button class="btn small ghost" data-sd-discard="${di}">Discard</button>
+        </div>
+      </div>
+      ${d.reading_note ? `<p class="draft-error">${esc(d.reading_note)}</p>` : ''}
+      ${d.entries.length ? `
+        <div class="table-scroll"><table class="sales-draft-table">
+          <thead><tr>
+            <th>Date</th><th class="num">Net sales</th><th class="num">Gross</th>
+            <th class="num">Tax</th><th>Note</th>
+          </tr></thead>
+          <tbody>${d.entries.map((e, ei) => `
+            <tr data-sd-row="${di}-${ei}">
+              <td><input type="date" data-f="date" value="${esc(e.date)}"></td>
+              <td class="num"><input type="number" step="0.01" data-f="net_sales" value="${e.net_sales}"></td>
+              <td class="num muted small">${e.gross_sales ? money(e.gross_sales) : '—'}</td>
+              <td class="num muted small">${e.tax ? money(e.tax) : '—'}</td>
+              <td>
+                ${e.existing_net_sales !== null
+                  ? `<span class="warn-text small">already recorded as ${money(e.existing_net_sales)} — saving replaces it</span>`
+                  : `<input type="text" data-f="note" value="${esc(e.note)}" placeholder="optional">`}
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table></div>`
+        : '<p class="muted small">No days were found on this report.</p>'}
+    </div>`;
+  }).join('');
+}
+
+$('#sales-drafts').addEventListener('click', async (e) => {
+  const discard = e.target.closest('[data-sd-discard]');
+  if (discard) {
+    state.salesDrafts.splice(Number(discard.dataset.sdDiscard), 1);
+    renderSalesDrafts();
+    return;
+  }
+
+  const saveBtn = e.target.closest('[data-sd-save]');
+  if (!saveBtn) return;
+
+  const di = Number(saveBtn.dataset.sdSave);
+  const draft = state.salesDrafts[di];
+  const rows = $$(`[data-sd-row^="${di}-"]`).map((tr) => {
+    const val = (f) => tr.querySelector(`[data-f="${f}"]`)?.value ?? '';
+    return { sale_date: val('date'), net_sales: Number(val('net_sales')) || 0, note: val('note') };
+  }).filter((r) => r.sale_date);
+
+  if (!rows.length) return toast('Every row needs a date before it can be saved.', true);
+
+  const zero = rows.filter((r) => r.net_sales <= 0).length;
+  if (zero && !confirm(`${zero} day${zero === 1 ? ' has' : 's have'} no net sales figure. Save anyway?`)) return;
+
+  try {
+    const out = await api('/api/sales/batch', {
+      method: 'POST',
+      body: JSON.stringify({ entries: rows, cost: draft.usage ? draft.usage.cost : 0, source_file: draft.file }),
+    });
+    toast(`Saved ${out.saved} day${out.saved === 1 ? '' : 's'}.`);
+    state.salesDrafts.splice(di, 1);
+    renderSalesDrafts();
+    loaders.sales();
+  } catch (err) {
+    toast(err.message, true);
+  }
 });
 
 $('#sales-filter').addEventListener('click', loaders.sales);

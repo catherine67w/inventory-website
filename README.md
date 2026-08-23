@@ -105,7 +105,7 @@ to sleep**, which takes the site down for everyone, so leave it open and plugged
 | **Invoices** | Every invoice, filterable by date, vendor, status, or a search across vendor / invoice # / product. Click any row to edit. |
 | **Item prices** | Every product you have bought, with its latest price, the change since last time, its low/high, and total spend. Sortable by any column — including total spend cheapest-first or dearest-first. Click a row for full price history. |
 | **Vendors** | Spend and invoice count per vendor. Click one to search every item you have bought from them. |
-| **Net sales** | Type net sales in by day, one at a time or pasted in bulk. This is what every percentage is measured against. |
+| **Net sales** | Upload a photo of your end-of-day report and the figures are read off it, or type a day in by hand. This is what every percentage is measured against. |
 | **Menu** | Every dish and drink with names, codes, and prices — see below. |
 | **Profit analysis** | The custom date range analysis — see below. |
 
@@ -160,6 +160,25 @@ Two views:
 - **Every line, by invoice** — each individual invoice line with its date, invoice number, and
   price. Good for "when exactly did we buy this, and what did it cost that day?" Clicking a line
   opens that invoice.
+
+
+## Net sales
+
+Every cost percentage and margin is measured against net sales, so this is the number the whole
+system rests on. Two ways in:
+
+**Upload a report.** Photograph or screenshot your end-of-day POS report and drop it on the
+**Net sales** tab. The net sales figure is read off it and shown for review before anything is
+saved. A report covering several days becomes one row per day.
+
+What it looks for is **net sales** — after discounts and comps, but *before* sales tax. Gross
+and tax are shown alongside for checking, but only net is stored. A weekly or period total row
+is deliberately ignored, since it is not a business day.
+
+**Or type one in.** The single-day form is always there and needs no API key.
+
+Days already recorded are flagged in the review table with their current figure, so re-uploading
+a report never silently overwrites a number you have already checked.
 
 ## Profit analysis
 

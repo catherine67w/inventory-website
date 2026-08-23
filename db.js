@@ -115,6 +115,18 @@ for (const [column, definition] of [
   }
 }
 
+// Sales days read from an uploaded report carry their share of what the
+// reading cost, so the spend panel reflects everything, not just invoices.
+for (const [column, definition] of [
+  ['source_file', "TEXT DEFAULT ''"],
+  ['extraction_cost', 'REAL NOT NULL DEFAULT 0'],
+]) {
+  const existing = db.prepare('PRAGMA table_info(sales)').all().map((c) => c.name);
+  if (!existing.includes(column)) {
+    db.exec(`ALTER TABLE sales ADD COLUMN ${column} ${definition}`);
+  }
+}
+
 
 // One-time seed of the printed menu. Runs only when the menu is empty, so
 // edits made in the app are never overwritten.

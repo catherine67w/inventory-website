@@ -7,7 +7,7 @@ const express = require('express');
 const multer = require('multer');
 
 const { db, vendorId } = require('./db');
-const { parseFile, apiKeyProblem, PRICING, MODEL } = require('./parse');
+const { parseFile, parseSalesFile, apiKeyProblem, PRICING, MODEL } = require('./parse');
 const auth = require('./auth');
 const { CATEGORIES, GROUPS, NAMES, groupOf } = require('./categories');
 
@@ -451,6 +451,79 @@ app.post('/api/sales', (req, res) => {
   res.json(db.prepare('SELECT * FROM sales WHERE sale_date = ?').get(date));
 });
 
+
+// Read one or more sales reports. Nothing is stored yet — the response is a
+// draft the user checks before saving, same as invoices.
+app.post('/api/sales/upload', upload.array('files', 20), wrap(async (req, res) => {
+  const files = req.files || [];
+  if (!files.length) return res.status(400).json({ error: 'No files were uploaded.' });
+
+  const results = [];
+  for (const file of files) {
+    const entry = { file: file.filename, original_name: file.originalname };
+    try {
+      const { entries, reading_note, usage } = await parseSalesFile(file.path, file.originalname);
+
+      // Flag days already recorded so nobody silently overwrites a figure.
+      const existing = db.prepare('SELECT sale_date, net_sales FROM sales WHERE sale_date = ?');
+      entry.entries = entries.map((e) => {
+        const already = e.date ? existing.get(e.date) : null;
+        return { ...e, existing_net_sales: already ? already.net_sales : null };
+      });
+      entry.reading_note = reading_note;
+      entry.usage = usage;
+    } catch (err) {
+      entry.error = err.message;
+      entry.entries = [];
+      entry.usage = { input_tokens: 0, output_tokens: 0, cost: 0 };
+    }
+    results.push(entry);
+  }
+  res.json({ results });
+}));
+
+// Save the reviewed rows. The reading cost is spread across the days it
+// produced, so the spend totals stay accurate however many days one photo held.
+app.post('/api/sales/batch', (req, res) => {
+  const entries = Array.isArray(req.body.entries) ? req.body.entries : [];
+  if (!entries.length) return res.status(400).json({ error: 'Nothing to save.' });
+
+  const valid = entries.filter((e) => /^\d{4}-\d{2}-\d{2}$/.test(String(e.sale_date || '')));
+  if (!valid.length) {
+    return res.status(400).json({ error: 'Every row needs a date in YYYY-MM-DD form.' });
+  }
+
+  const totalCost = Math.max(0, Number(req.body.cost) || 0);
+  const sourceFile = String(req.body.source_file || '');
+
+  // Split the reading cost across the days, giving any rounding remainder to
+  // the first row so the parts always add back to exactly what was charged.
+  const share = Math.floor((totalCost / valid.length) * 1e6) / 1e6;
+  const remainder = Math.round((totalCost - share * valid.length) * 1e6) / 1e6;
+
+  const save = db.prepare(`
+    INSERT INTO sales (sale_date, net_sales, note, source_file, extraction_cost)
+    VALUES (@sale_date, @net_sales, @note, @source_file, @extraction_cost)
+    ON CONFLICT(sale_date) DO UPDATE SET
+      net_sales = @net_sales, note = @note,
+      source_file = @source_file, extraction_cost = @extraction_cost
+  `);
+
+  db.transaction(() => {
+    valid.forEach((e, index) => {
+      save.run({
+        sale_date: e.sale_date,
+        net_sales: money(e.net_sales),
+        note: String(e.note || ''),
+        source_file: sourceFile,
+        extraction_cost: index === 0 ? share + remainder : share,
+      });
+    });
+  })();
+
+  res.json({ ok: true, saved: valid.length });
+});
+
 app.delete('/api/sales/:date', (req, res) => {
   db.prepare('DELETE FROM sales WHERE sale_date = ?').run(req.params.date);
   res.json({ ok: true });
@@ -811,6 +884,12 @@ app.get('/api/menu/flat', (req, res) => {
 // --- extraction spend -----------------------------------------------------
 
 function usageTotals(from, to) {
+  const salesRow = db.prepare(`
+    SELECT COALESCE(SUM(extraction_cost), 0) AS cost,
+           SUM(CASE WHEN extraction_cost > 0 THEN 1 ELSE 0 END) AS days_read
+    FROM sales WHERE sale_date BETWEEN @from AND @to
+  `).get({ from, to });
+
   const row = db.prepare(`
     SELECT COALESCE(SUM(extraction_cost), 0) AS cost,
            COALESCE(SUM(input_tokens), 0)    AS input_tokens,
@@ -819,14 +898,21 @@ function usageTotals(from, to) {
            SUM(CASE WHEN extraction_cost > 0 THEN 1 ELSE 0 END) AS read_automatically
     FROM invoices WHERE invoice_date BETWEEN @from AND @to
   `).get({ from, to });
+  const readCount = (row.read_automatically || 0) + (salesRow.days_read || 0);
+  const totalCost = row.cost + salesRow.cost;
+
   return {
     from, to,
-    cost: Math.round(row.cost * 1e6) / 1e6,
+    cost: Math.round(totalCost * 1e6) / 1e6,
+    invoice_cost: Math.round(row.cost * 1e6) / 1e6,
+    sales_cost: Math.round(salesRow.cost * 1e6) / 1e6,
     input_tokens: row.input_tokens,
     output_tokens: row.output_tokens,
     invoices: row.invoices,
     read_automatically: row.read_automatically || 0,
-    average_cost: row.read_automatically ? row.cost / row.read_automatically : 0,
+    sales_days_read: salesRow.days_read || 0,
+    total_read: readCount,
+    average_cost: readCount ? totalCost / readCount : 0,
   };
 }
 

@@ -509,3 +509,13 @@ th.sortable.active { color: var(--brand); }
   margin-bottom: 4px;
   border-bottom: 1px solid var(--line);
 }
+
+/* Sales report upload ---------------------------------------------------- */
+
+.dropzone.compact { padding: 22px 20px; margin: 12px 0; }
+.dropzone.compact .dz-icon { font-size: 24px; }
+
+.sales-draft-table { margin-top: 10px; font-size: 13px; }
+.sales-draft-table th, .sales-draft-table td { padding: 5px 7px; }
+.sales-draft-table input { padding: 5px 7px; font-size: 13px; }
+.sales-draft-table td.num input { text-align: right; }

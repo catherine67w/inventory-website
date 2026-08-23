@@ -151,10 +151,24 @@
         <p class="muted small">Saving a date that already exists overwrites it. To enter a whole week at once, use the bulk box below.</p>
       </div>
       <div class="card">
-        <h2>Bulk entry</h2>
-        <p class="muted small">One line per day: <code>2026-08-01, 4820.55</code> — an optional third column becomes the note.</p>
-        <textarea id="sales-bulk" rows="6" placeholder="2026-08-01, 4820.55&#10;2026-08-02, 5310.00, Saturday"></textarea>
-        <button class="btn" id="sales-bulk-save">Save all lines</button>
+        <h2>Upload a sales report</h2>
+        <p class="muted small">Photograph or screenshot your end-of-day report and the net sales
+          are read off it. A report covering several days becomes several entries.</p>
+
+        <div class="dropzone compact" id="sales-dropzone">
+          <input type="file" id="sales-file-input" multiple accept=".pdf,.png,.jpg,.jpeg,.gif,.webp" hidden>
+          <div class="dropzone-inner">
+            <span class="dz-icon">📈</span>
+            <p><strong>Drop sales reports here</strong> or <button class="link" id="sales-browse-btn" type="button">browse files</button></p>
+            <small>Photo, screenshot, or PDF — up to 20 files</small>
+          </div>
+        </div>
+
+        <div id="sales-progress" class="hidden">
+          <div class="progress-note" id="sales-progress-note"></div>
+        </div>
+
+        <div id="sales-drafts"></div>
       </div>
       <div class="card">
         <h2>Entered days</h2>

@@ -281,6 +281,134 @@ function parseCsv(filePath) {
   };
 }
 
+
+/* ---------- sales reports ---------- */
+
+const SALES_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['entries', 'reading_note'],
+  properties: {
+    entries: {
+      type: 'array',
+      description: 'One entry per business day shown on the report.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['date', 'net_sales', 'gross_sales', 'tax', 'note'],
+        properties: {
+          date: { type: 'string', description: 'Business date as YYYY-MM-DD. Empty string if not printed.' },
+          net_sales: { type: 'number', description: 'Net sales: after discounts and comps, BEFORE tax. 0 if not printed.' },
+          gross_sales: { type: 'number', description: 'Gross sales before discounts, if printed. 0 otherwise.' },
+          tax: { type: 'number', description: 'Sales tax, if printed. 0 otherwise.' },
+          note: { type: 'string', description: 'Anything worth flagging about this day, else empty.' },
+        },
+      },
+    },
+    reading_note: {
+      type: 'string',
+      description: 'Empty when the report was clear. Otherwise say briefly what was ambiguous.',
+    },
+  },
+};
+
+const SALES_PROMPT = `You read daily sales reports from restaurant point-of-sale systems.
+
+The number that matters is NET SALES: revenue after discounts, comps, and voids, but BEFORE
+sales tax. Report labels vary — "Net Sales", "Net Revenue", "Total Net", "Subtotal". Some
+reports only show a grand total that includes tax; that is NOT net sales.
+
+Rules:
+- Transcribe what is printed. Never estimate, average, or infer a figure that is not shown.
+- If the report covers several days, return one entry per day. If it is one day, return one entry.
+- Do not return a weekly or period total as if it were a day. Totals rows are not business days.
+- Dates are YYYY-MM-DD. Resolve two-digit years to the 2000s.
+- If net sales is genuinely not printed but gross and tax both are, still return net_sales as 0
+  and explain in reading_note. Do not calculate it yourself.
+- Money is a plain number: no currency symbols or separators.
+- Use reading_note to flag anything unclear — a blurred figure, an ambiguous label, a total you
+  were unsure whether to treat as a day.`;
+
+async function parseSalesWithClaude(filePath, ext) {
+  const problem = apiKeyProblem();
+  if (problem) {
+    const err = new Error(problem);
+    err.code = 'BAD_API_KEY';
+    throw err;
+  }
+
+  const client = new Anthropic();
+  let response;
+  try {
+    response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 8000,
+      system: SALES_PROMPT,
+      output_config: {
+        effort: 'medium',
+        format: { type: 'json_schema', schema: SALES_SCHEMA },
+      },
+      messages: [{
+        role: 'user',
+        content: [
+          fileToBlock(filePath, ext),
+          { type: 'text', text: 'Read the net sales from this report.' },
+        ],
+      }],
+    });
+  } catch (err) {
+    if (err.status === 401 || err.status === 403) {
+      throw new Error('Anthropic rejected the API key in .env. Check that it was copied in full, or create a new one.');
+    }
+    if (err.status === 400 && /credit|balance/i.test(err.message || '')) {
+      throw new Error('Your Anthropic account is out of credit. Add credit at console.anthropic.com, then try again.');
+    }
+    if (err.status === 429) throw new Error('Too many requests at once. Wait a moment and upload again.');
+    if (err.status >= 500) throw new Error('Anthropic had a temporary problem. Try uploading again in a minute.');
+    throw new Error(`Could not read this sales report: ${err.message}`);
+  }
+
+  if (response.stop_reason === 'refusal') {
+    throw new Error('The request was declined. Enter these figures by hand.');
+  }
+
+  const text = response.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+  const u = response.usage || {};
+  const usage = {
+    input_tokens: (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0),
+    output_tokens: u.output_tokens || 0,
+    cost: costOf(u),
+  };
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('Could not read the result as data. Enter these figures by hand.');
+  }
+
+  const entries = (Array.isArray(parsed.entries) ? parsed.entries : [])
+    .map((e) => ({
+      date: /^\d{4}-\d{2}-\d{2}$/.test(e.date || '') ? e.date : '',
+      net_sales: toNumber(e.net_sales),
+      gross_sales: toNumber(e.gross_sales),
+      tax: toNumber(e.tax),
+      note: String(e.note || '').trim(),
+    }))
+    // A row with neither a date nor a figure carries nothing worth reviewing.
+    .filter((e) => e.date || e.net_sales);
+
+  return { entries, reading_note: String(parsed.reading_note || '').trim(), usage };
+}
+
+async function parseSalesFile(filePath, originalName) {
+  const ext = path.extname(originalName || filePath).toLowerCase();
+  if (ext !== '.pdf' && !IMAGE_TYPES[ext]) {
+    throw new Error(`Unsupported file type "${ext}". Upload a photo, a screenshot, or a PDF.`);
+  }
+  return parseSalesWithClaude(filePath, ext);
+}
+
 // --- entry point ----------------------------------------------------------
 
 function normalize(parsed) {
@@ -330,4 +458,4 @@ async function parseFile(filePath, originalName) {
   throw new Error(`Unsupported file type "${ext}". Upload a PDF, an image, or a CSV.`);
 }
 
-module.exports = { parseFile, apiKeyProblem, costOf, PRICING, MODEL };
+module.exports = { parseFile, parseSalesFile, apiKeyProblem, costOf, PRICING, MODEL };
