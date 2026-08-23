@@ -468,14 +468,17 @@ loaders.vendors = async function loadVendors() {
       <thead><tr><th>Vendor</th><th>Contact</th><th>Terms</th><th class="num">Invoices</th>
       <th class="num">Total spend</th><th>Last invoice</th><th></th></tr></thead>
       <tbody>${rows.map((v) => `
-        <tr>
+        <tr class="clickable" data-vendor-items="${v.id}">
           <td>${esc(v.name)}</td>
           <td>${esc(v.contact || '—')}</td>
           <td>${esc(v.terms || '—')}</td>
           <td class="num">${v.invoice_count}</td>
           <td class="num">${money(v.total_spend)}</td>
           <td>${esc(v.last_invoice || '—')}</td>
-          <td class="num"><button class="btn small ghost" data-vendor-edit="${v.id}">Edit</button></td>
+          <td class="num">
+            <button class="btn small ghost" data-vendor-items="${v.id}">Search items</button>
+            <button class="btn small ghost" data-vendor-edit="${v.id}">Edit</button>
+          </td>
         </tr>`).join('')}
       </tbody>
     </table></div>`
@@ -492,7 +495,12 @@ $('#vendor-new').addEventListener('click', async () => {
 
 $('#vendors-table').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-vendor-edit]');
-  if (!btn) return;
+  if (!btn) {
+    const row = e.target.closest('[data-vendor-items]');
+    if (row) openVendorItems(row.dataset.vendorItems);
+    return;
+  }
+  e.stopPropagation();
   const vendor = state.vendors.find((v) => String(v.id) === btn.dataset.vendorEdit);
   const name = prompt('Vendor name', vendor.name);
   if (name === null) return;
@@ -501,6 +509,113 @@ $('#vendors-table').addEventListener('click', async (e) => {
   await api(`/api/vendors/${vendor.id}`, { method: 'PUT', body: JSON.stringify({ name, contact, terms }) });
   toast('Vendor updated.');
   loaders.vendors();
+});
+
+
+/* ---------- searching one vendor's items ---------- */
+
+state.vendorItems = { id: null, timer: null };
+
+async function openVendorItems(vendorId) {
+  state.vendorItems.id = vendorId;
+  ['#vi-q', '#vi-from', '#vi-to'].forEach((s) => { $(s).value = ''; });
+  $('#vi-mode').value = 'products';
+  $('#vendor-items').classList.remove('hidden');
+  await loadVendorItems();
+}
+
+async function loadVendorItems() {
+  const id = state.vendorItems.id;
+  if (!id) return;
+
+  const params = new URLSearchParams();
+  if ($('#vi-q').value.trim()) params.set('q', $('#vi-q').value.trim());
+  if ($('#vi-from').value) params.set('from', $('#vi-from').value);
+  if ($('#vi-to').value) params.set('to', $('#vi-to').value);
+
+  let data;
+  try {
+    data = await api(`/api/vendors/${id}/items?` + params);
+  } catch (err) {
+    $('#vi-results').innerHTML = emptyRow(err.message);
+    return;
+  }
+
+  $('#vi-title').textContent = data.vendor.name;
+
+  const s = data.summary;
+  const filtered = Boolean($('#vi-q').value.trim() || $('#vi-from').value || $('#vi-to').value);
+  $('#vi-summary').innerHTML = `
+    <p class="muted small">${filtered ? 'Matching ' : ''}${s.product_count} product${s.product_count === 1 ? '' : 's'}
+      across ${s.line_count} invoice line${s.line_count === 1 ? '' : 's'} — <strong>${money(s.total)}</strong>.</p>`;
+
+  const mode = $('#vi-mode').value;
+
+  if (!s.line_count) {
+    $('#vi-results').innerHTML = emptyRow(filtered
+      ? 'Nothing from this vendor matches that.'
+      : 'No invoice items recorded for this vendor yet.');
+    return;
+  }
+
+  $('#vi-results').innerHTML = mode === 'products' ? `
+    <div class="table-scroll"><table>
+      <thead><tr>
+        <th>Product</th><th>Category</th><th class="num">Times</th><th class="num">Qty</th>
+        <th class="num">Low / high</th><th class="num">Total spend</th><th>Last bought</th>
+      </tr></thead>
+      <tbody>${data.products.map((p) => `
+        <tr>
+          <td>${esc(p.description)}</td>
+          <td><span class="pill group">${esc(p.category)}</span></td>
+          <td class="num">${p.times_bought}</td>
+          <td class="num">${(p.total_quantity || 0).toFixed(1)} ${esc(p.unit || '')}</td>
+          <td class="num">${money(p.min_price)} / ${money(p.max_price)}</td>
+          <td class="num">${money(p.total_spend)}</td>
+          <td>${esc(p.last_bought || '')}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`
+    : `
+    <div class="table-scroll"><table>
+      <thead><tr>
+        <th>Date</th><th>Invoice #</th><th>Product</th><th>SKU</th>
+        <th class="num">Qty</th><th class="num">Unit price</th><th class="num">Extended</th>
+      </tr></thead>
+      <tbody>${data.lines.map((l) => `
+        <tr class="clickable" data-invoice="${l.invoice_id}">
+          <td>${esc(l.invoice_date)}</td>
+          <td>${esc(l.invoice_number || '—')}</td>
+          <td>${esc(l.description)}</td>
+          <td>${esc(l.sku || '—')}</td>
+          <td class="num">${l.quantity} ${esc(l.unit || '')}</td>
+          <td class="num">${money(l.unit_price)}</td>
+          <td class="num">${money(l.extended_price)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>
+    <p class="muted small">Click any line to open that invoice.</p>`;
+}
+
+// Debounced so it searches as you type without a request per keystroke.
+$('#vi-q').addEventListener('input', () => {
+  clearTimeout(state.vendorItems.timer);
+  state.vendorItems.timer = setTimeout(loadVendorItems, 250);
+});
+['#vi-from', '#vi-to', '#vi-mode'].forEach((sel) =>
+  $(sel).addEventListener('change', loadVendorItems));
+
+function closeVendorItems() {
+  $('#vendor-items').classList.add('hidden');
+  state.vendorItems.id = null;
+}
+
+$('#vi-close').addEventListener('click', closeVendorItems);
+$('#vi-done').addEventListener('click', closeVendorItems);
+$('#vendor-items').addEventListener('click', (e) => {
+  if (e.target === $('#vendor-items')) closeVendorItems();
+  // Opening an invoice from here replaces this modal with the invoice editor.
+  if (e.target.closest('[data-invoice]')) closeVendorItems();
 });
 
 /* ---------- net sales ---------- */

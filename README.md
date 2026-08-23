@@ -51,8 +51,8 @@ With a key, dropping in a **PDF or a photo** of an invoice reads the vendor, inv
 dates, totals, and every line item — including a suggested GL category per item. Without a key
 the app still works fully: **CSV import** and **manual entry** need no key.
 
-Get a key at https://console.anthropic.com. Extraction runs on Claude Opus 5 and costs a
-fraction of a cent per invoice.
+Get a key at https://console.anthropic.com. Reading an invoice costs a few cents; the exact
+figure for every invoice is shown on the Dashboard.
 
 ## Signing in
 
@@ -104,7 +104,7 @@ to sleep**, which takes the site down for everyone, so leave it open and plugged
 | **Upload** | Drag in PDFs, photos, or CSVs. Each becomes a draft you review before it is saved — nothing is written to the books until you approve it. |
 | **Invoices** | Every invoice, filterable by date, vendor, status, or a search across vendor / invoice # / product. Click any row to edit. |
 | **Item prices** | Every product you have bought, with its latest price, the change since last time, its low/high, and total spend. Click for full price history. |
-| **Vendors** | Spend and invoice count per vendor. |
+| **Vendors** | Spend and invoice count per vendor. Click one to search every item you have bought from them. |
 | **Net sales** | Type net sales in by day, one at a time or pasted in bulk. This is what every percentage is measured against. |
 | **Menu** | Every dish and drink with names, codes, and prices — see below. |
 | **Profit analysis** | The custom date range analysis — see below. |
@@ -144,6 +144,22 @@ Costs follow your invoices automatically: when a supplier raises a price, the pl
 margin move with it the next time you look. If an ingredient has never appeared on an invoice
 there is no price to cost with, and the dish is marked as incomplete rather than being quietly
 undercounted.
+
+
+## Searching a vendor's items
+
+Click any vendor on the **Vendors** tab to open their purchase history. The search box matches
+product descriptions, SKUs, categories, and invoice numbers — in English or Chinese — and filters
+as you type. A date range narrows it further.
+
+Two views:
+
+- **One row per product** — each distinct product once, with how many times you bought it, the
+  low and high price paid, and total spend. Good for "what do we buy from them, and what does it
+  cost us?"
+- **Every line, by invoice** — each individual invoice line with its date, invoice number, and
+  price. Good for "when exactly did we buy this, and what did it cost that day?" Clicking a line
+  opens that invoice.
 
 ## Profit analysis
 

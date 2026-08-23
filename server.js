@@ -196,6 +196,61 @@ app.put('/api/vendors/:id', (req, res) => {
   res.json(db.prepare('SELECT * FROM vendors WHERE id = ?').get(row.id));
 });
 
+
+// Every line item this vendor has supplied, searchable. Backs the vendor
+// drill-in on the Vendors screen.
+app.get('/api/vendors/:id/items', (req, res) => {
+  const vendor = db.prepare('SELECT * FROM vendors WHERE id = ?').get(req.params.id);
+  if (!vendor) return res.status(404).json({ error: 'Vendor not found.' });
+
+  const where = ['i.vendor_id = @vendor_id'];
+  const params = { vendor_id: vendor.id };
+  if (req.query.from) { where.push('i.invoice_date >= @from'); params.from = req.query.from; }
+  if (req.query.to) { where.push('i.invoice_date <= @to'); params.to = req.query.to; }
+  if (req.query.q) {
+    where.push('(it.description LIKE @q OR it.sku LIKE @q OR it.category LIKE @q OR i.invoice_number LIKE @q)');
+    params.q = `%${req.query.q}%`;
+  }
+  const clause = where.join(' AND ');
+
+  const lines = db.prepare(`
+    SELECT it.id, it.description, it.sku, it.category, it.quantity, it.unit,
+           it.unit_price, it.extended_price,
+           i.id AS invoice_id, i.invoice_number, i.invoice_date, i.status
+    FROM invoice_items it
+    JOIN invoices i ON i.id = it.invoice_id
+    WHERE ${clause}
+    ORDER BY i.invoice_date DESC, i.id DESC, it.line_no
+  `).all(params);
+
+  // Same rows collapsed to one entry per product, for the grouped view.
+  const products = db.prepare(`
+    SELECT it.description, it.unit, it.category,
+           COUNT(*)                   AS times_bought,
+           SUM(it.quantity)           AS total_quantity,
+           SUM(it.extended_price)     AS total_spend,
+           MIN(it.unit_price)         AS min_price,
+           MAX(it.unit_price)         AS max_price,
+           MAX(i.invoice_date)        AS last_bought
+    FROM invoice_items it
+    JOIN invoices i ON i.id = it.invoice_id
+    WHERE ${clause}
+    GROUP BY it.description, it.unit
+    ORDER BY total_spend DESC
+  `).all(params);
+
+  res.json({
+    vendor,
+    lines,
+    products: products.map((p) => ({ ...p, total_spend: money(p.total_spend) })),
+    summary: {
+      line_count: lines.length,
+      product_count: products.length,
+      total: money(lines.reduce((s, l) => s + l.extended_price, 0)),
+    },
+  });
+});
+
 // --- invoices -------------------------------------------------------------
 
 function invoiceFilters(q) {

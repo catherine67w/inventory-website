@@ -129,6 +129,7 @@
       <div class="view-head">
         <h1>Vendors</h1>
         <button class="btn" id="vendor-new">Add vendor</button>
+        <p class="muted">Click a vendor to search everything you have ever bought from them.</p>
       </div>
       <div class="card" id="vendors-table"></div>
     </section>
@@ -335,6 +336,38 @@ npm run disable-2fa</pre>
   </div>
 
 
+
+
+  <!-- VENDOR ITEM SEARCH -->
+  <div class="modal hidden" id="vendor-items">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="vi-title">Vendor</h2>
+        <button class="icon-btn" id="vi-close" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="filters">
+          <label class="grow">Search their items
+            <input type="search" id="vi-q" placeholder="product, SKU, category, or invoice #">
+          </label>
+          <label>From <input type="date" id="vi-from"></label>
+          <label>To <input type="date" id="vi-to"></label>
+          <label>View
+            <select id="vi-mode">
+              <option value="products">One row per product</option>
+              <option value="lines">Every line, by invoice</option>
+            </select>
+          </label>
+        </div>
+        <div id="vi-summary"></div>
+        <div id="vi-results"></div>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button class="btn ghost" id="vi-done">Close</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ADD PURCHASED ITEM TO A MENU ITEM -->
   <div class="modal hidden" id="link-editor">
