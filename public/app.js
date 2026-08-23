@@ -787,23 +787,44 @@ function renderSalesDrafts() {
       </div>`;
     }
 
-    const total = d.entries.reduce((s, e) => s + e.net_sales, 0);
+    const period = d.period || { label: '', start_date: '', end_date: '', net_sales: 0 };
+    const missing = d.missing_dates || [];
+    const span = period.start_date && period.end_date
+      ? `${period.start_date} → ${period.end_date}` : '';
+
+    // A month summary with a total but no day-by-day breakdown. Splitting it
+    // across days would be inventing figures, so it is offered as one entry.
+    const totalOnly = !d.entries.length && period.net_sales > 0;
+
     return `<div class="draft">
       <div class="draft-head">
         <strong>${esc(d.original_name)}</strong>
-        <span class="draft-meta">${d.entries.length} day${d.entries.length === 1 ? '' : 's'} · ${money(total)}</span>
+        <span class="draft-meta">${d.entries.length} day${d.entries.length === 1 ? '' : 's'}${span ? ` · ${esc(span)}` : ''}</span>
         ${d.usage && d.usage.cost ? `<span class="draft-cost">read for ${cost(d.usage.cost)}</span>` : ''}
         <div class="draft-actions">
-          <button class="btn small" data-sd-save="${di}">Save these days</button>
+          ${d.entries.length ? `<button class="btn small" data-sd-save="${di}">Save these days</button>` : ''}
+          ${totalOnly ? `<button class="btn small" data-sd-save-period="${di}">Save as one entry</button>` : ''}
           <button class="btn small ghost" data-sd-discard="${di}">Discard</button>
         </div>
       </div>
       ${d.reading_note ? `<p class="draft-error">${esc(d.reading_note)}</p>` : ''}
+
+      ${totalOnly ? `<p class="warn-text small">This report shows only a
+        ${esc(period.label || 'period total')} of ${money(period.net_sales)} with no day-by-day
+        breakdown. It can be stored as a single entry dated ${esc(period.end_date || 'the last day')},
+        but a date range that stops short of that day will not include any of it.</p>` : ''}
+
+      ${missing.length ? `<p class="warn-text small">${missing.length}
+        day${missing.length === 1 ? '' : 's'} inside ${esc(span || 'this range')} came back with no
+        row: ${esc(missing.slice(0, 8).join(', '))}${missing.length > 8 ? `, and ${missing.length - 8} more` : ''}.
+        If the restaurant was open those days, add them by hand after saving.</p>` : ''}
+
       ${d.entries.length ? `
+        <div class="sales-recon" data-sd-recon="${di}"></div>
         <div class="table-scroll"><table class="sales-draft-table">
           <thead><tr>
             <th>Date</th><th class="num">Net sales</th><th class="num">Gross</th>
-            <th class="num">Tax</th><th>Note</th>
+            <th class="num">Tax</th><th>Note</th><th></th>
           </tr></thead>
           <tbody>${d.entries.map((e, ei) => `
             <tr data-sd-row="${di}-${ei}">
@@ -816,19 +837,99 @@ function renderSalesDrafts() {
                   ? `<span class="warn-text small">already recorded as ${money(e.existing_net_sales)} — saving replaces it</span>`
                   : `<input type="text" data-f="note" value="${esc(e.note)}" placeholder="optional">`}
               </td>
+              <td><button class="link small" data-sd-row-remove="${di}-${ei}" title="Not a day — remove this row">✕</button></td>
             </tr>`).join('')}
           </tbody>
         </table></div>`
-        : '<p class="muted small">No days were found on this report.</p>'}
+        : (totalOnly ? '' : '<p class="muted small">No days were found on this report.</p>')}
     </div>`;
   }).join('');
+
+  state.salesDrafts.forEach((d, di) => { if (!d.error) updateSalesRecon(di); });
 }
+
+// Checks the days read against the report's own printed total. On a month of
+// 31 rows this is what catches a misread figure or a row that never came back.
+function updateSalesRecon(di) {
+  const box = $(`[data-sd-recon="${di}"]`);
+  if (!box) return;
+
+  const draft = state.salesDrafts[di];
+  const period = draft.period || { net_sales: 0, label: '' };
+  const rows = $$(`[data-sd-row^="${di}-"]`);
+  const sum = rows.reduce((s, tr) => s + (Number(tr.querySelector('[data-f="net_sales"]').value) || 0), 0);
+
+  const counted = `<strong>${rows.length} day${rows.length === 1 ? '' : 's'}</strong> totalling <strong>${money(sum)}</strong>`;
+
+  if (!period.net_sales) {
+    box.className = 'sales-recon';
+    box.innerHTML = `<span>${counted}. No printed total on the report to check against.</span>`;
+    return;
+  }
+
+  // Rounding on a month of figures lands within a cent or two either way.
+  const diff = Math.round((sum - period.net_sales) * 100) / 100;
+  const label = esc(period.label || 'report total');
+  if (Math.abs(diff) <= 0.02) {
+    box.className = 'sales-recon ok';
+    box.innerHTML = `<span>${counted} — matches the ${label} of ${money(period.net_sales)}. ✓</span>`;
+  } else {
+    box.className = 'sales-recon off';
+    box.innerHTML = `<span>${counted}, but the ${label} says ${money(period.net_sales)} —
+      ${diff > 0 ? 'over by' : 'short by'} <strong>${money(Math.abs(diff))}</strong>.
+      Check the figures against the report before saving.</span>`;
+  }
+}
+
+// Editing a figure re-checks it against the report's total straight away.
+$('#sales-drafts').addEventListener('input', (e) => {
+  const tr = e.target.closest('[data-sd-row]');
+  if (tr) updateSalesRecon(Number(tr.dataset.sdRow.split('-')[0]));
+});
 
 $('#sales-drafts').addEventListener('click', async (e) => {
   const discard = e.target.closest('[data-sd-discard]');
   if (discard) {
     state.salesDrafts.splice(Number(discard.dataset.sdDiscard), 1);
     renderSalesDrafts();
+    return;
+  }
+
+  const removeRow = e.target.closest('[data-sd-row-remove]');
+  if (removeRow) {
+    const [di, ei] = removeRow.dataset.sdRowRemove.split('-').map(Number);
+    state.salesDrafts[di].entries.splice(ei, 1);
+    renderSalesDrafts();
+    return;
+  }
+
+  const periodBtn = e.target.closest('[data-sd-save-period]');
+  if (periodBtn) {
+    const draft = state.salesDrafts[Number(periodBtn.dataset.sdSavePeriod)];
+    const p = draft.period;
+    const date = p.end_date || p.start_date;
+    if (!date) return toast('The report does not print a date for its total, so it cannot be stored.', true);
+    if (!confirm(`Store ${money(p.net_sales)} as a single entry on ${date}?\n\nOnly a date range that includes ${date} will count it.`)) return;
+    try {
+      await api('/api/sales/batch', {
+        method: 'POST',
+        body: JSON.stringify({
+          entries: [{
+            sale_date: date,
+            net_sales: p.net_sales,
+            note: `${p.label || 'Period'} total${p.start_date ? ` for ${p.start_date} to ${p.end_date}` : ''} — no daily breakdown on the report`,
+          }],
+          cost: draft.usage ? draft.usage.cost : 0,
+          source_file: draft.file,
+        }),
+      });
+      toast('Saved as one entry.');
+      state.salesDrafts.splice(Number(periodBtn.dataset.sdSavePeriod), 1);
+      renderSalesDrafts();
+      loaders.sales();
+    } catch (err) {
+      toast(err.message, true);
+    }
     return;
   }
 
@@ -844,8 +945,21 @@ $('#sales-drafts').addEventListener('click', async (e) => {
 
   if (!rows.length) return toast('Every row needs a date before it can be saved.', true);
 
-  const zero = rows.filter((r) => r.net_sales <= 0).length;
+  // Two rows on one date would silently overwrite each other on the way in.
+  const dates = rows.map((r) => r.sale_date);
+  const dupe = dates.find((d, i) => dates.indexOf(d) !== i);
+  if (dupe) return toast(`${dupe} appears on two rows. Fix or remove one before saving.`, true);
+
+  // A day the restaurant was closed is legitimately zero; an unread figure is not.
+  const zero = rows.filter((r) => r.net_sales <= 0 && !/clos/i.test(r.note)).length;
   if (zero && !confirm(`${zero} day${zero === 1 ? ' has' : 's have'} no net sales figure. Save anyway?`)) return;
+
+  const periodTotal = draft.period ? draft.period.net_sales : 0;
+  const sum = rows.reduce((s, r) => s + r.net_sales, 0);
+  const diff = Math.round((sum - periodTotal) * 100) / 100;
+  if (periodTotal && Math.abs(diff) > 0.02 && !confirm(
+    `These days add up to ${money(sum)}, but the report's own total is ${money(periodTotal)} — a difference of ${money(Math.abs(diff))}.\n\nSave anyway?`
+  )) return;
 
   try {
     const out = await api('/api/sales/batch', {

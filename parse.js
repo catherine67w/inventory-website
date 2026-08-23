@@ -305,6 +305,18 @@ const SALES_SCHEMA = {
         },
       },
     },
+    period: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['label', 'start_date', 'end_date', 'net_sales'],
+      description: 'The printed period / month total row, if the report shows one.',
+      properties: {
+        label: { type: 'string', description: 'How the total row is labelled, e.g. "MONTH TOTAL". Empty if none.' },
+        start_date: { type: 'string', description: 'First date the report covers, YYYY-MM-DD. Empty if not printed.' },
+        end_date: { type: 'string', description: 'Last date the report covers, YYYY-MM-DD. Empty if not printed.' },
+        net_sales: { type: 'number', description: 'The printed period total of NET sales. 0 if none is printed.' },
+      },
+    },
     reading_note: {
       type: 'string',
       description: 'Empty when the report was clear. Otherwise say briefly what was ambiguous.',
@@ -312,7 +324,9 @@ const SALES_SCHEMA = {
   },
 };
 
-const SALES_PROMPT = `You read daily sales reports from restaurant point-of-sale systems.
+const SALES_PROMPT = `You read sales reports from restaurant point-of-sale systems. These are
+often MONTHLY SUMMARIES: one page listing every business day of a month, sometimes with weekly
+subtotals and a month total at the bottom.
 
 The number that matters is NET SALES: revenue after discounts, comps, and voids, but BEFORE
 sales tax. Report labels vary — "Net Sales", "Net Revenue", "Total Net", "Subtotal". Some
@@ -320,13 +334,22 @@ reports only show a grand total that includes tax; that is NOT net sales.
 
 Rules:
 - Transcribe what is printed. Never estimate, average, or infer a figure that is not shown.
-- If the report covers several days, return one entry per day. If it is one day, return one entry.
-- Do not return a weekly or period total as if it were a day. Totals rows are not business days.
-- Dates are YYYY-MM-DD. Resolve two-digit years to the 2000s.
+- Return one entry per BUSINESS DAY, for every day printed. A month summary of 31 days must
+  return 31 entries — do not stop early, do not summarise, do not sample.
+- Subtotal rows are not days. Weekly subtotals, "WEEK 1", period totals and month totals must
+  never appear in entries.
+- Put the report's own grand total in "period": its label, the dates it covers, and its NET
+  figure. Leave period.net_sales at 0 if the only total printed includes tax.
+- If the report shows ONLY a month total with no day-by-day breakdown, return no entries and
+  fill in period. Never split a month total across days yourself.
+- Dates are YYYY-MM-DD. Reports often print only a day number ("14") or a weekday ("Tue 14");
+  take the month and year from the report heading. Resolve two-digit years to the 2000s.
+- A day printed with a blank, a dash or 0.00 because the restaurant was closed is still a day:
+  return it with net_sales 0 and say "closed" in its note.
 - If net sales is genuinely not printed but gross and tax both are, still return net_sales as 0
   and explain in reading_note. Do not calculate it yourself.
 - Money is a plain number: no currency symbols or separators.
-- Use reading_note to flag anything unclear — a blurred figure, an ambiguous label, a total you
+- Use reading_note to flag anything unclear — a blurred figure, an ambiguous label, a row you
   were unsure whether to treat as a day.`;
 
 async function parseSalesWithClaude(filePath, ext) {
@@ -342,7 +365,8 @@ async function parseSalesWithClaude(filePath, ext) {
   try {
     response = await client.messages.create({
       model: MODEL,
-      max_tokens: 8000,
+      // A full month is 31 rows, and a report may run to two pages of them.
+      max_tokens: 16000,
       system: SALES_PROMPT,
       output_config: {
         effort: 'medium',
@@ -352,7 +376,7 @@ async function parseSalesWithClaude(filePath, ext) {
         role: 'user',
         content: [
           fileToBlock(filePath, ext),
-          { type: 'text', text: 'Read the net sales from this report.' },
+          { type: 'text', text: 'Read the net sales from this report. Include every business day printed on it.' },
         ],
       }],
     });
@@ -387,6 +411,7 @@ async function parseSalesWithClaude(filePath, ext) {
     throw new Error('Could not read the result as data. Enter these figures by hand.');
   }
 
+  const seen = new Set();
   const entries = (Array.isArray(parsed.entries) ? parsed.entries : [])
     .map((e) => ({
       date: /^\d{4}-\d{2}-\d{2}$/.test(e.date || '') ? e.date : '',
@@ -396,9 +421,26 @@ async function parseSalesWithClaude(filePath, ext) {
       note: String(e.note || '').trim(),
     }))
     // A row with neither a date nor a figure carries nothing worth reviewing.
-    .filter((e) => e.date || e.net_sales);
+    .filter((e) => e.date || e.net_sales)
+    // One row per date: a month read twice off the same page would otherwise
+    // show up as a duplicate day the reviewer has to spot by eye.
+    .filter((e) => {
+      if (!e.date) return true;
+      if (seen.has(e.date)) return false;
+      seen.add(e.date);
+      return true;
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
 
-  return { entries, reading_note: String(parsed.reading_note || '').trim(), usage };
+  const p = parsed.period || {};
+  const period = {
+    label: String(p.label || '').trim(),
+    start_date: /^\d{4}-\d{2}-\d{2}$/.test(p.start_date || '') ? p.start_date : '',
+    end_date: /^\d{4}-\d{2}-\d{2}$/.test(p.end_date || '') ? p.end_date : '',
+    net_sales: toNumber(p.net_sales),
+  };
+
+  return { entries, period, reading_note: String(parsed.reading_note || '').trim(), usage };
 }
 
 async function parseSalesFile(filePath, originalName) {

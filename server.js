@@ -452,6 +452,30 @@ app.post('/api/sales', (req, res) => {
 });
 
 
+// Which calendar days inside the covered range came back with no row. A month
+// summary that reads 29 of 31 days is the failure worth catching, and it is
+// invisible in a total that only ever adds up what was actually read.
+function missingDates(entries, period) {
+  const dated = entries.map((e) => e.date).filter(Boolean).sort();
+  const from = period.start_date || dated[0];
+  const to = period.end_date || dated[dated.length - 1];
+  if (!from || !to || from > to) return [];
+
+  const have = new Set(dated);
+  const gaps = [];
+  const cursor = new Date(from + 'T00:00:00Z');
+  const end = new Date(to + 'T00:00:00Z');
+  while (cursor <= end) {
+    const iso = cursor.toISOString().slice(0, 10);
+    if (!have.has(iso)) gaps.push(iso);
+    // A range wider than a couple of months means the dates were misread;
+    // listing every day of it would be noise rather than a warning.
+    if (gaps.length > 70) return [];
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return gaps;
+}
+
 // Read one or more sales reports. Nothing is stored yet — the response is a
 // draft the user checks before saving, same as invoices.
 app.post('/api/sales/upload', upload.array('files', 20), wrap(async (req, res) => {
@@ -462,7 +486,7 @@ app.post('/api/sales/upload', upload.array('files', 20), wrap(async (req, res) =
   for (const file of files) {
     const entry = { file: file.filename, original_name: file.originalname };
     try {
-      const { entries, reading_note, usage } = await parseSalesFile(file.path, file.originalname);
+      const { entries, period, reading_note, usage } = await parseSalesFile(file.path, file.originalname);
 
       // Flag days already recorded so nobody silently overwrites a figure.
       const existing = db.prepare('SELECT sale_date, net_sales FROM sales WHERE sale_date = ?');
@@ -470,6 +494,10 @@ app.post('/api/sales/upload', upload.array('files', 20), wrap(async (req, res) =
         const already = e.date ? existing.get(e.date) : null;
         return { ...e, existing_net_sales: already ? already.net_sales : null };
       });
+      entry.period = period;
+      // Calendar days in the covered range with no row of their own. On a month
+      // summary these are the rows that went missing in the reading.
+      entry.missing_dates = missingDates(entries, period);
       entry.reading_note = reading_note;
       entry.usage = usage;
     } catch (err) {

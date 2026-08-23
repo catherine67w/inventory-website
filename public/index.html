@@ -148,19 +148,21 @@
           <label class="grow">Note <input type="text" id="sale-note" placeholder="optional"></label>
           <button class="btn" type="submit">Save</button>
         </form>
-        <p class="muted small">Saving a date that already exists overwrites it. To enter a whole week at once, use the bulk box below.</p>
+        <p class="muted small">Saving a date that already exists overwrites it. For a whole month at once, upload the report below.</p>
       </div>
       <div class="card">
         <h2>Upload a sales report</h2>
-        <p class="muted small">Photograph or screenshot your end-of-day report and the net sales
-          are read off it. A report covering several days becomes several entries.</p>
+        <p class="muted small">Photograph or screenshot your monthly sales summary and every day on
+          it is read off and listed for review. The days are checked against the report's own month
+          total before you save, and any day missing from the read is flagged. End-of-day reports
+          work the same way.</p>
 
         <div class="dropzone compact" id="sales-dropzone">
           <input type="file" id="sales-file-input" multiple accept=".pdf,.png,.jpg,.jpeg,.gif,.webp" hidden>
           <div class="dropzone-inner">
             <span class="dz-icon">📈</span>
             <p><strong>Drop sales reports here</strong> or <button class="link" id="sales-browse-btn" type="button">browse files</button></p>
-            <small>Photo, screenshot, or PDF — up to 20 files</small>
+            <small>Monthly summary or single day — photo, screenshot, or PDF, up to 20 files</small>
           </div>
         </div>
 

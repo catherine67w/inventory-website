@@ -519,3 +519,18 @@ th.sortable.active { color: var(--brand); }
 .sales-draft-table th, .sales-draft-table td { padding: 5px 7px; }
 .sales-draft-table input { padding: 5px 7px; font-size: 13px; }
 .sales-draft-table td.num input { text-align: right; }
+.sales-draft-table [data-sd-row-remove] { color: var(--muted); }
+.sales-draft-table [data-sd-row-remove]:hover { color: var(--danger); }
+
+/* The days read, checked against the total printed on the report itself. */
+.sales-recon {
+  margin-top: 10px;
+  padding: 8px 11px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.sales-recon.ok { border-color: var(--ok); background: #eef7f1; color: var(--ok); }
+.sales-recon.off { border-color: var(--accent); background: #fdf1e8; color: var(--accent); }
