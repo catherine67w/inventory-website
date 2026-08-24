@@ -22,6 +22,7 @@
       <button data-view="upload">Upload</button>
       <button data-view="invoices">Invoices</button>
       <button data-view="items">Item prices</button>
+      <button data-view="trends">Product trends</button>
       <button data-view="vendors">Vendors</button>
       <button data-view="sales">Net sales</button>
       <button data-view="menu">Menu</button>
@@ -132,6 +133,28 @@
         <p class="muted">Click a vendor to search everything you have ever bought from them.</p>
       </div>
       <div class="card" id="vendors-table"></div>
+    </section>
+
+    <!-- PRODUCT TRENDS -->
+    <section class="view hidden" id="view-trends">
+      <div class="view-head">
+        <h1>Product trends</h1>
+        <p class="muted">Chart what one product has done over every invoice that bought it —
+          what you paid per unit, how much you bought, and what it cost you.</p>
+      </div>
+
+      <div class="card">
+        <h2>Choose a product</h2>
+        <div class="filters inline">
+          <label class="grow">Search
+            <input type="search" id="trend-q" placeholder="beef, 羊肉, tofu…">
+          </label>
+          <button class="btn ghost" id="trend-search">Search</button>
+        </div>
+        <div id="trend-picker"></div>
+      </div>
+
+      <div id="trend-result"></div>
     </section>
 
     <!-- SALES -->

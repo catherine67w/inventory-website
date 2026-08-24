@@ -668,6 +668,92 @@ app.get('/api/items/history', (req, res) => {
 
 
 
+// --- product trends -------------------------------------------------------
+
+// Products worth charting, newest purchase first. A product bought once has no
+// trend to draw, so the count travels with it and the picker says so.
+app.get('/api/trends/products', (req, res) => {
+  const params = {};
+  let filter = '';
+  if (req.query.q) { filter = 'AND it.description LIKE @q'; params.q = `%${req.query.q}%`; }
+
+  res.json(db.prepare(`
+    SELECT it.description,
+           COUNT(*)                       AS purchase_count,
+           COUNT(DISTINCT i.vendor_id)    AS vendor_count,
+           SUM(it.extended_price)         AS total_spend,
+           MIN(i.invoice_date)            AS first_date,
+           MAX(i.invoice_date)            AS last_date
+    FROM invoice_items it
+    JOIN invoices i ON i.id = it.invoice_id
+    WHERE i.status IN ('approved', 'review') ${filter}
+    GROUP BY it.description
+    ORDER BY purchase_count DESC, total_spend DESC, it.description COLLATE NOCASE
+    LIMIT 300
+  `).all(params));
+});
+
+// Every purchase of one product, oldest first — the raw material for the line
+// graph. Kept as individual invoice lines rather than pre-averaged, so the
+// browser can chart price, quantity or spend from the same response.
+app.get('/api/trends/product', (req, res) => {
+  const description = String(req.query.description || '');
+  if (!description) return res.status(400).json({ error: 'Choose a product first.' });
+
+  const params = { description };
+  const where = ["i.status IN ('approved', 'review')", 'it.description = @description'];
+  if (req.query.from) { where.push('i.invoice_date >= @from'); params.from = req.query.from; }
+  if (req.query.to) { where.push('i.invoice_date <= @to'); params.to = req.query.to; }
+  if (req.query.vendor_id) { where.push('i.vendor_id = @vendor_id'); params.vendor_id = Number(req.query.vendor_id); }
+
+  const points = db.prepare(`
+    SELECT i.invoice_date AS date, i.id AS invoice_id, i.invoice_number,
+           i.vendor_id, v.name AS vendor_name,
+           it.quantity, it.unit, it.unit_price, it.extended_price
+    FROM invoice_items it
+    JOIN invoices i ON i.id = it.invoice_id
+    JOIN vendors  v ON v.id = i.vendor_id
+    WHERE ${where.join(' AND ')}
+    ORDER BY i.invoice_date ASC, i.id ASC
+  `).all(params);
+
+  // Which vendors sold it, and in what units. Both matter for reading the
+  // graph: prices from two vendors are not one trend, and a price per case
+  // cannot be compared with a price per pound.
+  const vendors = [];
+  const units = [];
+  for (const p of points) {
+    const vendor = vendors.find((v) => v.id === p.vendor_id);
+    if (vendor) vendor.count += 1;
+    else vendors.push({ id: p.vendor_id, name: p.vendor_name, count: 1 });
+    const unit = (p.unit || '').trim();
+    if (unit && !units.includes(unit)) units.push(unit);
+  }
+
+  const prices = points.map((p) => p.unit_price).filter((n) => n > 0);
+  const first = prices[0] ?? null;
+  const last = prices[prices.length - 1] ?? null;
+
+  res.json({
+    description,
+    points,
+    vendors,
+    units,
+    summary: {
+      purchases: points.length,
+      first_date: points.length ? points[0].date : '',
+      last_date: points.length ? points[points.length - 1].date : '',
+      total_spend: money(points.reduce((s, p) => s + p.extended_price, 0)),
+      total_quantity: Math.round(points.reduce((s, p) => s + p.quantity, 0) * 1000) / 1000,
+      first_price: first,
+      last_price: last,
+      min_price: prices.length ? Math.min(...prices) : null,
+      max_price: prices.length ? Math.max(...prices) : null,
+      change_pct: first > 0 && last !== null ? Math.round(((last - first) / first) * 1000) / 10 : null,
+    },
+  });
+});
+
 // --- two-factor setup -----------------------------------------------------
 //
 // These sit behind the normal sign-in gate: you must already be signed in to

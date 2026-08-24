@@ -6,7 +6,8 @@
   "scripts": {
     "start": "caffeinate -is node server.js",
     "start:nocaffeine": "node server.js",
-    "disable-2fa": "node scripts/disable-2fa.js"
+    "disable-2fa": "node scripts/disable-2fa.js",
+    "backup": "node scripts/backup.js"
   },
   "keywords": [],
   "author": "",

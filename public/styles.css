@@ -510,6 +510,45 @@ th.sortable.active { color: var(--brand); }
   border-bottom: 1px solid var(--line);
 }
 
+/* Product trends --------------------------------------------------------- */
+
+.trend-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.trend-head h2 { margin: 0; flex: 1; min-width: 200px; }
+.trend-controls { display: flex; gap: 6px; flex-wrap: wrap; }
+.trend-filters { margin-top: 14px; }
+
+.chart-wrap { position: relative; margin-top: 6px; }
+.line-chart { width: 100%; height: auto; display: block; overflow: visible; }
+.line-chart .grid { stroke: var(--line); stroke-width: 1; }
+.line-chart .axis-line { stroke: var(--muted); stroke-width: 1; opacity: .5; }
+.line-chart .axis { font-size: 11px; fill: var(--muted); }
+.line-chart .axis-title { font-size: 11px; fill: var(--muted); }
+.line-chart .trend-line { fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.line-chart .dot { cursor: pointer; stroke: var(--panel); stroke-width: 2; }
+.line-chart .dot:hover { r: 6.5; }
+
+/* Follows the hovered point; positioned against .chart-wrap. */
+.chart-tip {
+  position: absolute;
+  transform: translate(-50%, -115%);
+  background: var(--ink);
+  color: #fff;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 5;
+  box-shadow: var(--shadow);
+}
+.chart-tip .muted { color: #c4ced8; }
+
+.chart-legend span::before { display: none; }
+.chart-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+
+tbody tr.selected { background: var(--brand-soft); }
+
 /* Sales report upload ---------------------------------------------------- */
 
 .dropzone.compact { padding: 22px 20px; margin: 12px 0; }

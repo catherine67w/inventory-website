@@ -693,6 +693,331 @@ $('#vendor-items').addEventListener('click', (e) => {
   if (e.target.closest('[data-invoice]')) closeVendorItems();
 });
 
+/* ---------- product trends ---------- */
+
+state.trend = { description: '', metric: 'unit_price', vendorId: '', from: '', to: '', data: null };
+
+const TREND_METRICS = {
+  unit_price: {
+    label: 'Price per unit',
+    axis: 'Unit price',
+    format: (v) => money(v),
+    // A price chart forced to a zero baseline flattens the movement that
+    // matters, so this one is padded around the range instead.
+    zeroBased: false,
+  },
+  quantity: { label: 'Quantity bought', axis: 'Quantity', format: (v) => trimNumber(v), zeroBased: true },
+  extended_price: { label: 'Spend', axis: 'Spend', format: (v) => money(v), zeroBased: true },
+};
+
+const TREND_COLORS = ['#1f6f5c', '#b4531f', '#3a5f8a', '#7a4b8f', '#8a6d1f'];
+
+const trimNumber = (v) => {
+  const rounded = Math.round(v * 1000) / 1000;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+};
+
+loaders.trends = async function loadTrends() {
+  await loadTrendPicker();
+  if (state.trend.description) renderTrend();
+};
+
+async function loadTrendPicker() {
+  const q = $('#trend-q').value.trim();
+  const rows = await api('/api/trends/products' + (q ? '?q=' + encodeURIComponent(q) : ''));
+
+  if (!rows.length) {
+    $('#trend-picker').innerHTML = emptyRow(q
+      ? `Nothing bought matches “${esc(q)}”.`
+      : 'No purchased products yet. Upload some invoices first.');
+    return;
+  }
+
+  $('#trend-picker').innerHTML = `
+    <div class="table-scroll"><table>
+      <thead><tr>
+        <th>Product</th><th class="num">Times bought</th><th>Bought between</th>
+        <th class="num">Total spend</th><th></th>
+      </tr></thead>
+      <tbody>${rows.map((r) => `
+        <tr class="clickable ${r.description === state.trend.description ? 'selected' : ''}"
+            data-trend-pick="${esc(r.description)}">
+          <td>${esc(r.description)}${r.vendor_count > 1
+            ? `<div class="muted small">${r.vendor_count} vendors</div>` : ''}</td>
+          <td class="num">${r.purchase_count}${r.purchase_count < 2
+            ? '<div class="muted small">no trend yet</div>' : ''}</td>
+          <td>${esc(r.first_date)} → ${esc(r.last_date)}</td>
+          <td class="num">${money(r.total_spend)}</td>
+          <td class="num"><button class="btn small">Chart it</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`;
+}
+
+$('#trend-search').addEventListener('click', loadTrendPicker);
+$('#trend-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadTrendPicker(); });
+
+$('#trend-picker').addEventListener('click', (e) => {
+  const row = e.target.closest('[data-trend-pick]');
+  if (!row) return;
+  // A new product starts from its own full history, not the last one's dates.
+  state.trend = { ...state.trend, description: row.dataset.trendPick, vendorId: '', from: '', to: '' };
+  renderTrend();
+});
+
+async function renderTrend() {
+  const params = new URLSearchParams({ description: state.trend.description });
+  if (state.trend.vendorId) params.set('vendor_id', state.trend.vendorId);
+  if (state.trend.from) params.set('from', state.trend.from);
+  if (state.trend.to) params.set('to', state.trend.to);
+
+  const data = await api('/api/trends/product?' + params);
+  state.trend.data = data;
+  loadTrendPicker();
+
+  const { points, summary, vendors, units } = data;
+  const metric = TREND_METRICS[state.trend.metric];
+
+  if (!points.length) {
+    $('#trend-result').innerHTML = `<div class="card">
+      <h2>${esc(data.description)}</h2>
+      ${emptyRow('No purchases of this product in that date range.')}
+      <button class="btn small ghost" data-trend-reset="1">Show every purchase</button>
+    </div>`;
+    return;
+  }
+
+  const change = summary.change_pct;
+  const cards = [
+    { label: 'Times bought', value: String(summary.purchases), sub: `${summary.first_date} → ${summary.last_date}` },
+    { label: 'Latest price', value: summary.last_price === null ? '—' : money(summary.last_price), sub: 'per unit' },
+    {
+      label: 'Since first purchase',
+      value: change === null ? '—' : `${change > 0 ? '+' : ''}${change.toFixed(1)}%`,
+      sub: summary.first_price === null ? '' : `from ${money(summary.first_price)}`,
+      cls: change === null ? '' : change > 0.5 ? 'warn' : change < -0.5 ? 'good' : '',
+    },
+    { label: 'Low / high', value: `${money(summary.min_price)} / ${money(summary.max_price)}`, sub: 'per unit' },
+    { label: 'Total spend', value: money0(summary.total_spend), sub: `${trimNumber(summary.total_quantity)} ${esc(units[0] || 'units')} in total` },
+  ];
+
+  $('#trend-result').innerHTML = `
+    <div class="card">
+      <div class="trend-head">
+        <h2>${esc(data.description)}</h2>
+        <div class="trend-controls">
+          ${Object.entries(TREND_METRICS).map(([key, m]) => `
+            <button class="btn small ${key === state.trend.metric ? '' : 'ghost'}"
+                    data-trend-metric="${key}">${m.label}</button>`).join('')}
+        </div>
+      </div>
+
+      <div class="stat-row">${cards.map((c) => `
+        <div class="stat">
+          <div class="stat-label">${c.label}</div>
+          <div class="stat-value ${c.cls || ''}">${c.value}</div>
+          <div class="stat-sub">${c.sub}</div>
+        </div>`).join('')}
+      </div>
+
+      ${units.length > 1 ? `<p class="warn-text small">This product was invoiced in more than one
+        unit (${esc(units.join(', '))}). A price per ${esc(units[0])} and a price per
+        ${esc(units[1])} are not the same measure, so read the price line with that in mind —
+        it usually means a line item was read with the wrong unit.</p>` : ''}
+
+      ${vendors.length > 1 ? `<p class="muted small">Bought from ${vendors.length} vendors —
+        one line each, since their prices are separate trends rather than one.</p>` : ''}
+
+      <div class="chart-wrap" id="trend-chart">${lineChart(points, state.trend.metric, vendors)}</div>
+
+      <div class="filters inline trend-filters">
+        <label>From <input type="date" id="trend-from" value="${esc(state.trend.from)}"></label>
+        <label>To <input type="date" id="trend-to" value="${esc(state.trend.to)}"></label>
+        <label>Vendor
+          <select id="trend-vendor">
+            <option value="">All vendors</option>
+            ${(state.trend.vendorId ? state.trend.data.vendors : vendors).map((v) => `
+              <option value="${v.id}" ${String(v.id) === String(state.trend.vendorId) ? 'selected' : ''}>
+                ${esc(v.name)}</option>`).join('')}
+          </select>
+        </label>
+        <button class="btn ghost" data-trend-apply="1">Apply</button>
+        ${state.trend.from || state.trend.to || state.trend.vendorId
+          ? '<button class="btn ghost" data-trend-reset="1">Every purchase</button>' : ''}
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>The purchases behind the line</h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Date</th><th>Vendor</th><th>Invoice #</th><th class="num">Qty</th>
+          <th class="num">Unit price</th><th class="num">Spend</th></tr></thead>
+        <tbody>${points.slice().reverse().map((p) => `
+          <tr class="clickable" data-trend-invoice="${p.invoice_id}">
+            <td>${esc(p.date)}</td><td>${esc(p.vendor_name)}</td>
+            <td>${esc(p.invoice_number || '—')}</td>
+            <td class="num">${trimNumber(p.quantity)} ${esc(p.unit || '')}</td>
+            <td class="num">${money(p.unit_price)}</td>
+            <td class="num">${money(p.extended_price)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+    </div>`;
+
+  attachChartTooltip(metric);
+}
+
+// Groups one vendor's purchases by date. Two invoice lines on the same day are
+// one point: quantity and spend add up, and the price is weighted by quantity
+// so a 40-case delivery is not averaged flat against a single case.
+function seriesFor(points, metric) {
+  const byDate = new Map();
+  for (const p of points) {
+    const at = byDate.get(p.date) || { date: p.date, quantity: 0, extended_price: 0, weighted: 0, lines: [] };
+    at.quantity += p.quantity;
+    at.extended_price += p.extended_price;
+    at.weighted += p.unit_price * (p.quantity || 1);
+    at.lines.push(p);
+    byDate.set(p.date, at);
+  }
+
+  return [...byDate.values()].map((at) => {
+    const weight = at.lines.reduce((s, l) => s + (l.quantity || 1), 0);
+    const value = metric === 'unit_price'
+      ? (weight ? at.weighted / weight : 0)
+      : at[metric];
+    return { date: at.date, value, lines: at.lines };
+  }).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function lineChart(points, metricKey, vendors) {
+  const metric = TREND_METRICS[metricKey];
+  const W = 900;
+  const H = 320;
+  const PAD = { top: 18, right: 18, bottom: 42, left: 68 };
+
+  const groups = vendors.length > 1
+    ? vendors.map((v) => ({ name: v.name, points: points.filter((p) => p.vendor_id === v.id) }))
+    : [{ name: vendors[0] ? vendors[0].name : '', points }];
+
+  const series = groups
+    .map((g, i) => ({ name: g.name, color: TREND_COLORS[i % TREND_COLORS.length], values: seriesFor(g.points, metricKey) }))
+    .filter((s) => s.values.length);
+
+  const all = series.flatMap((s) => s.values);
+  const times = all.map((v) => Date.parse(v.date + 'T00:00:00Z'));
+  const minTime = Math.min(...times);
+  const maxTime = Math.max(...times);
+  const span = maxTime - minTime;
+
+  const values = all.map((v) => v.value);
+  let low = metric.zeroBased ? 0 : Math.min(...values);
+  let high = Math.max(...values);
+  if (high === low) { high = low + Math.max(1, Math.abs(low) * 0.1); }   // one flat line still needs a scale
+  if (!metric.zeroBased) low = Math.max(0, low - (high - low) * 0.15);
+  high += (high - low) * 0.12;
+
+  const x = (date) => (span
+    ? PAD.left + ((Date.parse(date + 'T00:00:00Z') - minTime) / span) * (W - PAD.left - PAD.right)
+    : (PAD.left + W - PAD.right) / 2);
+  const y = (value) => H - PAD.bottom - ((value - low) / (high - low)) * (H - PAD.top - PAD.bottom);
+
+  const ticks = 4;
+  const gridlines = Array.from({ length: ticks + 1 }, (_, i) => {
+    const value = low + ((high - low) * i) / ticks;
+    return `<line class="grid" x1="${PAD.left}" y1="${y(value).toFixed(1)}" x2="${W - PAD.right}" y2="${y(value).toFixed(1)}"/>
+      <text class="axis" x="${PAD.left - 10}" y="${(y(value) + 4).toFixed(1)}" text-anchor="end">${metric.format(value)}</text>`;
+  }).join('');
+
+  // Enough date labels to read the span without them colliding.
+  const dates = [...new Set(all.map((v) => v.date))].sort();
+  const step = Math.ceil(dates.length / 6);
+  const dateLabels = dates.filter((_, i) => i % step === 0 || i === dates.length - 1).map((d) =>
+    `<text class="axis" x="${x(d).toFixed(1)}" y="${H - PAD.bottom + 20}" text-anchor="middle">${d.slice(5)}</text>`).join('');
+
+  const lines = series.map((s) => {
+    const path = s.values.map((v, i) => `${i ? 'L' : 'M'}${x(v.date).toFixed(1)},${y(v.value).toFixed(1)}`).join(' ');
+    const dots = s.values.map((v) => `<circle class="dot" cx="${x(v.date).toFixed(1)}" cy="${y(v.value).toFixed(1)}" r="4.5"
+      fill="${s.color}" data-date="${v.date}" data-value="${v.value}" data-vendor="${esc(s.name)}"
+      data-lines="${v.lines.length}" data-invoice="${v.lines[0].invoice_id}"/>`).join('');
+    return `<path class="trend-line" d="${path}" stroke="${s.color}"/>${dots}`;
+  }).join('');
+
+  const single = all.length === 1;
+
+  return `
+    <svg viewBox="0 0 ${W} ${H}" class="line-chart" role="img"
+         aria-label="${esc(metric.label)} for ${esc(state.trend.description)}">
+      ${gridlines}
+      <line class="axis-line" x1="${PAD.left}" y1="${H - PAD.bottom}" x2="${W - PAD.right}" y2="${H - PAD.bottom}"/>
+      ${lines}
+      ${dateLabels}
+      <text class="axis-title" x="${PAD.left}" y="${PAD.top - 4}">${metric.axis}${
+        metric.zeroBased ? '' : ' — scale does not start at zero'}</text>
+    </svg>
+    ${series.length > 1 ? `<div class="legend chart-legend">${series.map((s) =>
+      `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('')}</div>` : ''}
+    ${single ? '<p class="muted small">One purchase so far — a line needs at least two.</p>' : ''}
+    <div class="chart-tip hidden" id="trend-tip"></div>`;
+}
+
+// Hovering a point says what it was; clicking opens the invoice it came from.
+function attachChartTooltip(metric) {
+  const wrap = $('#trend-chart');
+  const tip = $('#trend-tip');
+  if (!wrap || !tip) return;
+
+  wrap.addEventListener('mouseover', (e) => {
+    const dot = e.target.closest('.dot');
+    if (!dot) return;
+    const lines = Number(dot.dataset.lines);
+    tip.innerHTML = `<strong>${metric.format(Number(dot.dataset.value))}</strong>
+      <div>${esc(dot.dataset.date)}</div>
+      ${dot.dataset.vendor ? `<div class="muted">${esc(dot.dataset.vendor)}</div>` : ''}
+      ${lines > 1 ? `<div class="muted">${lines} invoice lines that day</div>` : ''}`;
+    const box = wrap.getBoundingClientRect();
+    const dotBox = dot.getBoundingClientRect();
+    tip.style.left = `${dotBox.left - box.left + dotBox.width / 2}px`;
+    tip.style.top = `${dotBox.top - box.top}px`;
+    tip.classList.remove('hidden');
+  });
+
+  wrap.addEventListener('mouseout', (e) => {
+    if (e.target.closest('.dot')) tip.classList.add('hidden');
+  });
+
+  wrap.addEventListener('click', (e) => {
+    const dot = e.target.closest('.dot');
+    if (dot) editInvoice(dot.dataset.invoice);
+  });
+}
+
+$('#trend-result').addEventListener('click', (e) => {
+  const metricBtn = e.target.closest('[data-trend-metric]');
+  if (metricBtn) {
+    state.trend.metric = metricBtn.dataset.trendMetric;
+    renderTrend();
+    return;
+  }
+
+  if (e.target.closest('[data-trend-apply]')) {
+    state.trend.from = $('#trend-from').value;
+    state.trend.to = $('#trend-to').value;
+    state.trend.vendorId = $('#trend-vendor').value;
+    renderTrend();
+    return;
+  }
+
+  if (e.target.closest('[data-trend-reset]')) {
+    state.trend = { ...state.trend, from: '', to: '', vendorId: '' };
+    renderTrend();
+    return;
+  }
+
+  const row = e.target.closest('[data-trend-invoice]');
+  if (row) editInvoice(row.dataset.trendInvoice);
+});
+
 /* ---------- net sales ---------- */
 
 loaders.sales = async function loadSales() {

@@ -104,6 +104,7 @@ to sleep**, which takes the site down for everyone, so leave it open and plugged
 | **Upload** | Drag in PDFs, photos, or CSVs. Each becomes a draft you review before it is saved — nothing is written to the books until you approve it. |
 | **Invoices** | Every invoice, filterable by date, vendor, status, or a search across vendor / invoice # / product. Click any row to edit. |
 | **Item prices** | Every product you have bought, with its latest price, the change since last time, its low/high, and total spend. Sortable by any column — including total spend cheapest-first or dearest-first. Click a row for full price history. |
+| **Product trends** | A line graph of one product across every invoice that bought it — price per unit, quantity, or spend. See below. |
 | **Vendors** | Spend and invoice count per vendor. Click one to search every item you have bought from them. |
 | **Net sales** | Upload a photo of your monthly sales summary and every day on it is read off, checked against the report's own month total, and listed for review — or type a day in by hand. This is what every percentage is measured against. |
 | **Menu** | Every dish and drink with names, codes, and prices — see below. |
@@ -145,6 +146,43 @@ margin move with it the next time you look. If an ingredient has never appeared 
 there is no price to cost with, and the dish is marked as incomplete rather than being quietly
 undercounted.
 
+
+## Product trends
+
+Pick any product you have bought and the **Product trends** tab draws it as a line graph over
+every invoice that bought it. Search by name — English, Chinese, or item code — then click
+**Chart it**.
+
+Three things can be plotted, and they answer different questions:
+
+| Line | Question it answers |
+| --- | --- |
+| **Price per unit** | Is this supplier putting their prices up? |
+| **Quantity bought** | Are we using more of this than we used to? |
+| **Spend** | What is this product costing us over time? |
+
+Above the graph: how many times you bought it, the latest price, the change since the very first
+purchase, the low and high paid, and the total spent.
+
+**Reading it honestly** — the parts that stop a chart from lying:
+
+- **Price never starts the axis at zero**, and the graph says so. A zero baseline flattens a 15%
+  price rise into a line that looks flat. Quantity and spend do start at zero, where a zero
+  baseline is the truthful choice.
+- **Each vendor gets its own line.** If two suppliers sell you the same product, joining their
+  prices into one line would draw a zigzag that looks like price volatility when it is really
+  just two different suppliers. The legend names them, and the vendor filter isolates one.
+- **Two invoices on the same day are one point.** Quantity and spend add up; the price is
+  weighted by quantity, so a 40-case delivery is not averaged flat against a single case.
+- **Mixed units are called out.** If the same product was invoiced in both cases and pounds, the
+  price line is comparing two different things — and that usually means a line item was read with
+  the wrong unit rather than anything real.
+
+Hovering a point shows the figure, the date, the vendor, and how many invoice lines are behind
+it. Clicking a point — or any row in the table underneath — opens that invoice.
+
+The date range defaults to the product's whole history. Narrowing it re-draws from just that
+window; **Every purchase** puts it back.
 
 ## Searching a vendor's items
 
@@ -273,8 +311,27 @@ If a line total is missing it is calculated from quantity × unit price.
 
 ## Backing it up
 
-Everything is in two places: `data.db` and `uploads/`. Copy both.
+```bash
+npm run backup
+```
+
+That writes a dated copy of the database into `backups/`, with the invoice files beside it, and
+prints what went in so you can see it worked. Pass a folder to send it elsewhere:
 
 ```bash
-cp data.db ~/Dropbox/invoice-backup.db && cp -r uploads ~/Dropbox/invoice-uploads
+npm run backup ~/Dropbox/invoice-backups
 ```
+
+**Do not back up by copying `data.db` on its own.** The database runs in WAL mode, so recent
+writes live in `data.db-wal` until SQLite folds them in — which can be weeks. A copy of `data.db`
+alone can open as an empty database. `npm run backup` uses SQLite's own `VACUUM INTO`, which
+writes one complete file safely while the app is running, and then reopens it to count what it
+contains before telling you it worked.
+
+To restore, stop the app, and put the backup in place of all three database files:
+
+```bash
+rm -f data.db data.db-wal data.db-shm && cp backups/invoice-backup-YYYY-MM-DD-HHMM.db data.db
+```
+
+Then copy the matching `-files` folder back over `uploads/`.
