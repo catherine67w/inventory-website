@@ -303,6 +303,7 @@ app.get('/api/invoices/:id', (req, res) => {
   `).get(req.params.id);
   if (!invoice) return res.status(404).json({ error: 'Invoice not found.' });
   invoice.items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY line_no, id').all(invoice.id);
+  invoice.pages = db.prepare('SELECT id, file, original_name FROM invoice_pages WHERE invoice_id = ? ORDER BY id').all(invoice.id);
   res.json(invoice);
 });
 
@@ -399,12 +400,130 @@ app.post('/api/invoices/:id/status', (req, res) => {
   res.json({ ok: true, status });
 });
 
+// Invoices this one could be a continuation of. Same vendor first, then
+// nearest in date, because a second page belongs to the invoice it was
+// photographed minutes after.
+app.get('/api/invoices/:id/merge-candidates', (req, res) => {
+  const source = db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.params.id);
+  if (!source) return res.status(404).json({ error: 'Invoice not found.' });
+
+  const rows = db.prepare(`
+    SELECT i.id, i.invoice_number, i.invoice_date, i.total, i.status, v.name AS vendor_name,
+           i.vendor_id,
+           (SELECT COUNT(*) FROM invoice_items it WHERE it.invoice_id = i.id) AS item_count,
+           (SELECT COALESCE(SUM(it.extended_price), 0) FROM invoice_items it
+             WHERE it.invoice_id = i.id) AS items_sum
+    FROM invoices i JOIN vendors v ON v.id = i.vendor_id
+    WHERE i.id != @id
+    ORDER BY
+      CASE WHEN i.vendor_id = @vendor_id THEN 0 ELSE 1 END,
+      ABS(julianday(i.invoice_date) - julianday(@date)),
+      i.id DESC
+    LIMIT 50
+  `).all({ id: source.id, vendor_id: source.vendor_id, date: source.invoice_date });
+
+  res.json({
+    source: {
+      id: source.id, invoice_number: source.invoice_number, invoice_date: source.invoice_date,
+      total: source.total, status: source.status,
+      items_sum: money(db.prepare('SELECT COALESCE(SUM(extended_price), 0) AS s FROM invoice_items WHERE invoice_id = ?').get(source.id).s),
+      item_count: db.prepare('SELECT COUNT(*) AS n FROM invoice_items WHERE invoice_id = ?').get(source.id).n,
+    },
+    candidates: rows.map((r) => ({ ...r, items_sum: money(r.items_sum), same_vendor: r.vendor_id === source.vendor_id })),
+  });
+});
+
+// Folds one invoice into another as extra pages of it.
+//
+// The line items combine — that is the whole point, since a page-two photo
+// carries the items missing from page one. The MONEY does not combine by
+// default: both pages of one invoice usually print the same grand total, so
+// adding them would silently double the invoice. The caller has to say which
+// total is right, and the three options are named rather than guessed.
+app.post('/api/invoices/:id/merge', (req, res) => {
+  const source = db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.params.id);
+  const target = db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.body.target_id);
+  if (!source) return res.status(404).json({ error: 'That invoice no longer exists.' });
+  if (!target) return res.status(404).json({ error: 'Choose an invoice to merge into.' });
+  if (source.id === target.id) return res.status(400).json({ error: 'An invoice cannot be merged into itself.' });
+
+  const MODES = ['keep', 'source', 'sum'];
+  const mode = MODES.includes(req.body.total_mode) ? req.body.total_mode : 'keep';
+
+  const add = (a, b) => money(a + b);
+  const totals = {
+    keep:   { subtotal: target.subtotal, tax: target.tax, freight: target.freight, discount: target.discount, total: target.total },
+    source: { subtotal: source.subtotal, tax: source.tax, freight: source.freight, discount: source.discount, total: source.total },
+    sum:    {
+      subtotal: add(target.subtotal, source.subtotal), tax: add(target.tax, source.tax),
+      freight: add(target.freight, source.freight), discount: add(target.discount, source.discount),
+      total: add(target.total, source.total),
+    },
+  }[mode];
+
+  const nextLine = db.prepare('SELECT COALESCE(MAX(line_no), 0) AS n FROM invoice_items WHERE invoice_id = ?').get(target.id).n;
+
+  db.transaction(() => {
+    // Items keep their order, continuing after the target's existing lines.
+    db.prepare(`
+      UPDATE invoice_items
+      SET invoice_id = @target, line_no = line_no + @offset
+      WHERE invoice_id = @source
+    `).run({ target: target.id, source: source.id, offset: nextLine });
+
+    // The source's photograph becomes another page of the target rather than
+    // being deleted with the row — it is the evidence for the items just moved.
+    if (source.source_file) {
+      db.prepare('INSERT INTO invoice_pages (invoice_id, file, original_name) VALUES (?, ?, ?)')
+        .run(target.id, source.source_file, `page from invoice ${source.invoice_number || source.id}`);
+    }
+    // Any pages the source had already collected come across too.
+    db.prepare('UPDATE invoice_pages SET invoice_id = ? WHERE invoice_id = ?').run(target.id, source.id);
+
+    db.prepare(`
+      UPDATE invoices SET
+        subtotal = @subtotal, tax = @tax, freight = @freight,
+        discount = @discount, total = @total,
+        invoice_number = CASE WHEN invoice_number = '' THEN @number ELSE invoice_number END,
+        extraction_cost = extraction_cost + @cost,
+        input_tokens = input_tokens + @input_tokens,
+        output_tokens = output_tokens + @output_tokens,
+        updated_at = datetime('now')
+      WHERE id = @id
+    `).run({
+      ...totals, id: target.id,
+      number: source.invoice_number || '',
+      cost: source.extraction_cost || 0,
+      input_tokens: source.input_tokens || 0,
+      output_tokens: source.output_tokens || 0,
+    });
+
+    // Deleted directly rather than through the delete endpoint, which would
+    // remove the file that now belongs to the target.
+    db.prepare('DELETE FROM invoices WHERE id = ?').run(source.id);
+  })();
+
+  const merged = db.prepare(`
+    SELECT i.*, v.name AS vendor_name,
+           (SELECT COUNT(*) FROM invoice_items it WHERE it.invoice_id = i.id) AS item_count,
+           (SELECT COALESCE(SUM(it.extended_price), 0) FROM invoice_items it WHERE it.invoice_id = i.id) AS items_sum
+    FROM invoices i JOIN vendors v ON v.id = i.vendor_id WHERE i.id = ?
+  `).get(target.id);
+
+  res.json({ ok: true, invoice: { ...merged, items_sum: money(merged.items_sum) } });
+});
+
 app.delete('/api/invoices/:id', (req, res) => {
   const row = db.prepare('SELECT source_file FROM invoices WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Invoice not found.' });
+
+  // Extra pages merged in are this invoice's files too, and would be orphaned
+  // on disk if only source_file were cleaned up.
+  const pages = db.prepare('SELECT file FROM invoice_pages WHERE invoice_id = ?').all(req.params.id);
   db.prepare('DELETE FROM invoices WHERE id = ?').run(req.params.id);
-  if (row.source_file) {
-    fs.promises.unlink(path.join(UPLOAD_DIR, path.basename(row.source_file))).catch(() => {});
+
+  for (const file of [row.source_file, ...pages.map((p) => p.file)]) {
+    if (file) fs.promises.unlink(path.join(UPLOAD_DIR, path.basename(file))).catch(() => {});
   }
   res.json({ ok: true });
 });

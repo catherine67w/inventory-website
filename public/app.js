@@ -36,6 +36,10 @@ async function api(url, options = {}) {
 const money = (v) =>
   (Number(v) || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
+// For arithmetic on money. money() above formats for display and returns a
+// string, so it must never be used mid-calculation.
+const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+
 const money0 = (v) =>
   (Number(v) || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
@@ -355,8 +359,10 @@ loaders.invoices = async function loadInvoices() {
           <td class="num">${r.item_count}</td>
           <td class="num">${money(r.total)}</td>
           <td><span class="pill ${r.status}">${r.status === 'approved' ? 'Approved' : 'Review'}</span></td>
-          <td class="num">${r.status === 'review'
-            ? `<button class="btn small ghost" data-approve="${r.id}">Approve</button>` : ''}</td>
+          <td class="num nowrap">${r.status === 'review'
+            ? `<button class="btn small ghost" data-approve="${r.id}">Approve</button>
+               <button class="btn small ghost" data-merge="${r.id}"
+                 title="This is another page of an invoice already here">Add to another</button>` : ''}</td>
         </tr>`).join('')}
       </tbody>
       <tfoot><tr>
@@ -387,9 +393,169 @@ document.addEventListener('click', async (e) => {
     loaders.invoices();
     return;
   }
+  const merge = e.target.closest('[data-merge]');
+  if (merge) {
+    e.stopPropagation();
+    openMerge(Number(merge.dataset.merge));
+    return;
+  }
+
   const row = e.target.closest('[data-invoice]');
   if (row) editInvoice(row.dataset.invoice);
 });
+
+/* ---------- merging the pages of one invoice ---------- */
+
+// A long invoice gets photographed a page at a time, and each photo arrives as
+// its own invoice. This folds one into another: the line items combine, the
+// photo is kept as an extra page, and the money is only ever combined when
+// explicitly asked for — both pages usually print the same grand total, and
+// adding those together would double the invoice.
+
+state.merge = { sourceId: null, data: null, targetId: null, mode: 'keep', filter: '' };
+
+async function openMerge(sourceId) {
+  const data = await api(`/api/invoices/${sourceId}/merge-candidates`);
+  state.merge = { sourceId, data, targetId: null, mode: 'keep', filter: '' };
+  renderMerge();
+  $('#merge').classList.remove('hidden');
+}
+
+function renderMerge() {
+  const { data, targetId, mode, filter } = state.merge;
+  const source = data.source;
+
+  const term = filter.trim().toLowerCase();
+  const candidates = data.candidates.filter((c) => !term
+    || c.vendor_name.toLowerCase().includes(term)
+    || String(c.invoice_number || '').toLowerCase().includes(term)
+    || c.invoice_date.includes(term));
+
+  const target = data.candidates.find((c) => c.id === targetId);
+
+  $('#merge-body').innerHTML = `
+    <div class="merge-source">
+      <div class="muted small">Moving these lines out of</div>
+      <strong>${esc(source.invoice_number ? '#' + source.invoice_number : 'the untitled invoice')}
+        · ${esc(source.invoice_date)}</strong>
+      <div class="muted small">${source.item_count} line${source.item_count === 1 ? '' : 's'}
+        worth ${money(source.items_sum)} · invoice total ${money(source.total)}</div>
+    </div>
+
+    <label class="grow block">Find the invoice these pages belong to
+      <input type="search" id="merge-filter" value="${esc(filter)}" placeholder="vendor, invoice #, or date">
+    </label>
+
+    <div class="table-scroll merge-list"><table>
+      <thead><tr><th></th><th>Date</th><th>Vendor</th><th>Invoice #</th>
+        <th class="num">Lines</th><th class="num">Total</th></tr></thead>
+      <tbody>${candidates.length ? candidates.map((c) => `
+        <tr class="clickable ${c.id === targetId ? 'selected' : ''}" data-merge-target="${c.id}">
+          <td><input type="radio" name="merge-target" ${c.id === targetId ? 'checked' : ''}></td>
+          <td>${esc(c.invoice_date)}</td>
+          <td>${esc(c.vendor_name)}${c.same_vendor ? '' : '<div class="muted small">different vendor</div>'}</td>
+          <td>${esc(c.invoice_number || '—')}</td>
+          <td class="num">${c.item_count}</td>
+          <td class="num">${money(c.total)}</td>
+        </tr>`).join('')
+        : '<tr><td colspan="6" class="muted">No invoices match.</td></tr>'}
+      </tbody>
+    </table></div>
+
+    ${target ? mergePreview(source, target, mode) : '<p class="muted small">Choose the invoice above.</p>'}
+
+    <div class="modal-actions">
+      <button class="btn" id="merge-go" ${target ? '' : 'disabled'}>Add the pages</button>
+      <button class="btn ghost" id="merge-cancel">Cancel</button>
+    </div>`;
+}
+
+// Spells out what the money will be afterwards, because this is the one action
+// in the app that can silently double an invoice.
+function mergePreview(source, target, mode) {
+  // Everything here stays a number until the moment it is printed: money()
+  // returns a formatted string, and doing arithmetic on one silently yields
+  // zeroes and NaN rather than failing.
+  const combinedLines = round2(source.items_sum + target.items_sum);
+  const totals = { keep: target.total, source: source.total, sum: round2(target.total + source.total) };
+  const chosen = totals[mode];
+  const gap = round2(chosen - combinedLines);
+
+  const option = (key, label, hint) => `
+    <label class="merge-option ${mode === key ? 'on' : ''}">
+      <input type="radio" name="merge-mode" value="${key}" ${mode === key ? 'checked' : ''}>
+      <span><strong>${label} — ${money(totals[key])}</strong><br><span class="muted small">${hint}</span></span>
+    </label>`;
+
+  return `
+    <div class="merge-preview">
+      <div class="muted small">After merging, this invoice has</div>
+      <strong>${source.item_count + target.item_count} lines worth ${money(combinedLines)}</strong>
+
+      <div class="merge-options">
+        ${option('keep', 'Keep the total already on it', 'The usual choice: every page of an invoice prints the same grand total.')}
+        ${option('source', 'Use the total from the pages being added', 'When the page being added is the one showing the real grand total.')}
+        ${option('sum', 'Add the two totals together', 'Only when each page totals its own items and neither shows a grand total. This doubles the money if that is not true.')}
+      </div>
+
+      <div class="sales-recon ${Math.abs(gap) <= 0.02 ? 'ok' : 'off'}">
+        ${Math.abs(gap) <= 0.02
+          ? `<span>Lines add up to <strong>${money(combinedLines)}</strong>, matching the invoice total. ✓</span>`
+          : `<span>Lines add up to <strong>${money(combinedLines)}</strong> against a total of
+             <strong>${money(chosen)}</strong> — ${gap > 0 ? `<strong>${money(gap)}</strong> still unaccounted for,
+             so there may be another page` : `<strong>${money(-gap)}</strong> more than the total, which usually means
+             a page was added twice`}.</span>`}
+      </div>
+    </div>`;
+}
+
+$('#merge-body').addEventListener('input', (e) => {
+  if (e.target.id === 'merge-filter') {
+    state.merge.filter = e.target.value;
+    const cursor = e.target.selectionStart;
+    renderMerge();
+    const box = $('#merge-filter');
+    box.focus();
+    box.setSelectionRange(cursor, cursor);
+  }
+});
+
+$('#merge-body').addEventListener('change', (e) => {
+  if (e.target.name === 'merge-mode') {
+    state.merge.mode = e.target.value;
+    renderMerge();
+  }
+});
+
+$('#merge-body').addEventListener('click', async (e) => {
+  const row = e.target.closest('[data-merge-target]');
+  if (row) {
+    state.merge.targetId = Number(row.dataset.mergeTarget);
+    renderMerge();
+    return;
+  }
+
+  if (e.target.closest('#merge-cancel')) { closeMerge(); return; }
+
+  if (e.target.closest('#merge-go')) {
+    const { sourceId, targetId, mode } = state.merge;
+    if (!targetId) return;
+    try {
+      const out = await api(`/api/invoices/${sourceId}/merge`, {
+        method: 'POST',
+        body: JSON.stringify({ target_id: targetId, total_mode: mode }),
+      });
+      closeMerge();
+      toast(`Pages added — that invoice now has ${out.invoice.item_count} lines.`);
+      loaders.invoices();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+});
+
+function closeMerge() { $('#merge').classList.add('hidden'); }
+$('#merge-close').addEventListener('click', closeMerge);
 
 /* ---------- item prices ---------- */
 
@@ -1644,10 +1810,16 @@ function openEditor(data) {
   const sourceLink = $('#editor-source');
   if (state.editor.source_file) {
     sourceLink.href = '/files/' + state.editor.source_file;
+    sourceLink.textContent = (base.pages && base.pages.length) ? 'Page 1' : 'View original';
     sourceLink.classList.remove('hidden');
   } else {
     sourceLink.classList.add('hidden');
   }
+
+  // Pages merged in later each get their own link, so every line item can be
+  // checked against the photograph it came from.
+  $('#editor-pages').innerHTML = (base.pages || []).map((p, i) =>
+    `<a class="link" target="_blank" rel="noopener" href="/files/${esc(p.file)}">Page ${i + 2}</a>`).join('');
   $('#ed-delete').classList.toggle('hidden', !base.id);
 
   renderEditorLines();

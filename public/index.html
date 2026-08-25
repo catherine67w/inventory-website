@@ -308,6 +308,7 @@ npm run disable-2fa</pre>
         <h2 id="editor-title">Invoice</h2>
         <div class="modal-head-actions">
           <a id="editor-source" class="link" target="_blank" rel="noopener">View original</a>
+          <span id="editor-pages" class="editor-pages"></span>
           <button class="icon-btn" id="editor-close" aria-label="Close">✕</button>
         </div>
       </div>
@@ -367,6 +368,17 @@ npm run disable-2fa</pre>
   </div>
 
   <!-- ITEM HISTORY -->
+  <!-- MERGE PAGES -->
+  <div class="modal hidden" id="merge">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>Add these pages to another invoice</h2>
+        <button class="icon-btn" id="merge-close" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="merge-body"></div>
+    </div>
+  </div>
+
   <div class="modal hidden" id="history">
     <div class="modal-card narrow">
       <div class="modal-head">

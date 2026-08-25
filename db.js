@@ -115,6 +115,20 @@ for (const [column, definition] of [
   }
 }
 
+// A long invoice is photographed a page at a time, so one invoice can own
+// several files. The first page stays in invoices.source_file; pages merged in
+// afterwards land here, so the photograph behind every line item is kept.
+db.exec(`
+CREATE TABLE IF NOT EXISTS invoice_pages (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id    INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  file          TEXT NOT NULL DEFAULT '',
+  original_name TEXT DEFAULT '',
+  added_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_pages_invoice ON invoice_pages(invoice_id);
+`);
+
 // Sales days read from an uploaded report carry their share of what the
 // reading cost, so the spend panel reflects everything, not just invoices.
 // period_start is the first day a row covers. It equals sale_date for an

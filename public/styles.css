@@ -510,6 +510,37 @@ th.sortable.active { color: var(--brand); }
   border-bottom: 1px solid var(--line);
 }
 
+/* Merging invoice pages -------------------------------------------------- */
+
+.merge-source {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  margin-bottom: 14px;
+}
+label.block { display: block; margin-bottom: 12px; }
+.merge-list { max-height: 260px; overflow-y: auto; }
+.merge-list table { font-size: 13px; }
+.merge-preview { margin-top: 16px; }
+.merge-options { display: grid; gap: 8px; margin: 10px 0 12px; }
+
+.merge-option {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 13px;
+}
+.merge-option.on { border-color: var(--brand); background: var(--brand-soft); }
+.merge-option input { margin-top: 2px; }
+
+.editor-pages { display: inline-flex; gap: 10px; margin-left: 10px; }
+td.nowrap { white-space: nowrap; }
+
 /* Product trends --------------------------------------------------------- */
 
 .trend-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }

@@ -110,7 +110,7 @@ to sleep**, which takes the site down for everyone, so leave it open and plugged
 | --- | --- |
 | **Dashboard** | Month-to-date purchases, net sales, COGS, food cost %, gross margin, and anything waiting for review. |
 | **Upload** | Drag in PDFs, photos, or CSVs. Each becomes a draft you review before it is saved — nothing is written to the books until you approve it. |
-| **Invoices** | Every invoice, filterable by date, vendor, status, or a search across vendor / invoice # / product. Click any row to edit. |
+| **Invoices** | Every invoice, filterable by date, vendor, status, or a search across vendor / invoice # / product. Click any row to edit. Page two of a long invoice can be folded into page one — see below. |
 | **Item prices** | Every product you have bought, with its latest price, the change since last time, its low/high, and total spend. Search filters as you type — across product name, SKU, vendor, and category, in English or Chinese — and the date boxes narrow it to a period. Sortable by any column, including total spend cheapest-first or dearest-first. Click a row for full price history. |
 | **Product trends** | A line graph of one product across every invoice that bought it — price per unit, quantity, or spend. See below. |
 | **Vendors** | Spend and invoice count per vendor. Click one to search every item you have bought from them. |
@@ -191,6 +191,38 @@ it. Clicking a point — or any row in the table underneath — opens that invoi
 
 The date range defaults to the product's whole history. Narrowing it re-draws from just that
 window; **Every purchase** puts it back.
+
+## Invoices longer than one page
+
+A long invoice gets photographed a page at a time, and each photo arrives as its own invoice —
+so page two shows up as a separate entry with the leftover line items on it. The giveaway is an
+invoice whose line items add up to far less than its total.
+
+On the **Invoices** tab, any invoice still marked *Review* has an **Add to another** button.
+That opens the page it belongs to and folds it in:
+
+- **The line items combine**, keeping their order and continuing the numbering.
+- **The photo is kept** as an extra page of the invoice, so every line item can still be checked
+  against the picture it came from. The editor shows *Page 1*, *Page 2*, and so on.
+- The reading cost carries across too, so the Dashboard spend stays accurate.
+- The spare entry disappears.
+
+Candidates are listed with the same vendor first, then nearest by date, since a second page is
+usually photographed moments after the first.
+
+**The money never combines by itself.** Both pages of one invoice normally print the same grand
+total, so adding them would silently double the invoice. You choose, and each choice shows what
+the total becomes:
+
+| Choice | When it is right |
+| --- | --- |
+| **Keep the total already on it** | Almost always — every page prints the same grand total. |
+| **Use the total from the pages being added** | When the page you are adding is the one showing the real grand total. |
+| **Add the two totals together** | Only when each page totals its own items and neither shows a grand total. |
+
+Before you commit to it, the dialog adds up the combined line items against the total you picked
+and says whether they reconcile — green when they match, orange naming what is still missing or
+what has been counted twice.
 
 ## Searching a vendor's items
 
