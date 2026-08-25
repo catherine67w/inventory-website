@@ -51,6 +51,14 @@ With a key, dropping in a **PDF or a photo** of an invoice reads the vendor, inv
 dates, totals, and every line item — including a suggested GL category per item. Without a key
 the app still works fully: **CSV import** and **manual entry** need no key.
 
+**iPhone HEIC photos work.** An iPhone shoots HEIC by default, and nothing else reads it — not
+the extraction, not Chrome, not most backup viewers. So an uploaded HEIC is converted to JPEG
+the moment it arrives, and the JPEG is what gets stored, read, displayed and backed up. The
+original stays on your phone. Conversion uses `sips`, which is built into macOS, so there is
+nothing to install — but it does mean HEIC conversion only works when the app is running on a
+Mac. On any other machine the upload says so and points you at
+**Settings → Camera → Formats → Most Compatible**, which makes the iPhone shoot JPEGs instead.
+
 Get a key at https://console.anthropic.com. Reading an invoice costs a few cents; the exact
 figure for every invoice is shown on the Dashboard.
 

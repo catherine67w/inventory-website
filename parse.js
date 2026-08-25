@@ -581,7 +581,7 @@ async function parseSalesFile(filePath, originalName) {
     throw new Error('This is an older .xls file. Open it and save it again as .xlsx, then upload that.');
   }
   if (ext !== '.pdf' && !IMAGE_TYPES[ext]) {
-    throw new Error(`Unsupported file type "${ext}". Upload a photo, a screenshot, a PDF, or an .xlsx export.`);
+    throw new Error(`Unsupported file type "${ext}". Upload a photo (JPG, PNG, or HEIC), a screenshot, a PDF, or an .xlsx export.`);
   }
   return parseSalesWithClaude(filePath, ext);
 }
@@ -632,7 +632,7 @@ async function parseFile(filePath, originalName) {
     const { parsed, usage } = await parseWithClaude(filePath, ext);
     return { data: normalize(parsed), usage };
   }
-  throw new Error(`Unsupported file type "${ext}". Upload a PDF, an image, or a CSV.`);
+  throw new Error(`Unsupported file type "${ext}". Upload a PDF, a photo (JPG, PNG, or HEIC), or a CSV.`);
 }
 
 module.exports = { parseFile, parseSalesFile, apiKeyProblem, costOf, PRICING, MODEL };

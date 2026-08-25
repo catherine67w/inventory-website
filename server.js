@@ -9,6 +9,7 @@ const multer = require('multer');
 const { db, vendorId } = require('./db');
 const { parseFile, parseSalesFile, apiKeyProblem, PRICING, MODEL } = require('./parse');
 const auth = require('./auth');
+const { normalizeUpload } = require('./images');
 const { CATEGORIES, GROUPS, NAMES, groupOf } = require('./categories');
 
 const app = express();
@@ -418,6 +419,12 @@ app.post('/api/upload', upload.array('files', 20), wrap(async (req, res) => {
   for (const file of files) {
     const entry = { file: file.filename, original_name: file.originalname };
     try {
+      // An iPhone HEIC becomes a JPEG before anything else touches it, so the
+      // file that gets read, shown and backed up is one everything can open.
+      normalizeUpload(file);
+      entry.file = file.filename;
+      entry.original_name = file.originalname;
+
       const { data, usage } = await parseFile(file.path, file.originalname);
       entry.parsed = data;
       entry.usage = usage;
@@ -494,6 +501,10 @@ app.post('/api/sales/upload', upload.array('files', 20), wrap(async (req, res) =
   for (const file of files) {
     const entry = { file: file.filename, original_name: file.originalname };
     try {
+      normalizeUpload(file);
+      entry.file = file.filename;
+      entry.original_name = file.originalname;
+
       const { entries, period, reading_note, usage, gross_sales, tax } =
         await parseSalesFile(file.path, file.originalname);
 
