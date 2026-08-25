@@ -394,6 +394,7 @@ document.addEventListener('click', async (e) => {
 /* ---------- item prices ---------- */
 
 state.itemSort = { sort: 'total_spend', dir: 'desc' };
+state.itemSearchTicket = 0;
 
 // Header cell that sorts. Clicking the active column flips direction.
 function sortHeader(label, key, cls = '') {
@@ -409,9 +410,15 @@ loaders.items = async function loadItems() {
   params.set('dir', state.itemSort.dir);
   if ($('#item-from').value) params.set('from', $('#item-from').value);
   if ($('#item-to').value) params.set('to', $('#item-to').value);
-  if ($('#item-q').value.trim()) params.set('q', $('#item-q').value.trim());
+  const searchTerm = $('#item-q').value.trim();
+  if (searchTerm) params.set('q', searchTerm);
 
+  // Searches are fired as you type, so replies can arrive out of order. Only
+  // the newest one is allowed to paint, or a slow earlier reply lands last and
+  // shows results for a word you have already finished deleting.
+  const ticket = ++state.itemSearchTicket;
   const rows = await api('/api/items?' + params);
+  if (ticket !== state.itemSearchTicket) return;
 
   const dirLabel = state.itemSort.sort === 'total_spend'
     ? (state.itemSort.dir === 'asc' ? 'cheapest first' : 'most expensive first')
@@ -419,7 +426,9 @@ loaders.items = async function loadItems() {
 
   $('#items-table').innerHTML = rows.length ? `
     <div class="sort-bar">
-      <span class="muted small">Sorted by
+      <span class="muted small">${searchTerm
+        ? `<strong>${rows.length}</strong> match${rows.length === 1 ? '' : 'es'} for “${esc(searchTerm)}” · sorted by `
+        : 'Sorted by '}
         <strong>${esc(({
           total_spend: 'total spend', latest_price: 'latest price',
           purchase_count: 'times bought', description: 'product name', vendor: 'vendor',
@@ -458,10 +467,23 @@ loaders.items = async function loadItems() {
         </tr>`; }).join('')}
       </tbody>
     </table></div>`
-    : emptyRow('No purchased items yet.');
+    // "Nothing bought yet" and "nothing matched your search" are different
+    // facts, and telling someone the first when the second is true is a lie.
+    : emptyRow(searchTerm || $('#item-from').value || $('#item-to').value
+      ? `Nothing matches${searchTerm ? ` “${esc(searchTerm)}”` : ''}${
+        $('#item-from').value || $('#item-to').value ? ' in that date range' : ''}.`
+      : 'No purchased items yet.');
 };
 
 $('#item-apply').addEventListener('click', loaders.items);
+
+// Filters as you type, one request after the typing stops rather than one per
+// keystroke. The Apply button still works for anyone who reaches for it.
+let itemSearchTimer;
+$('#item-q').addEventListener('input', () => {
+  clearTimeout(itemSearchTimer);
+  itemSearchTimer = setTimeout(loaders.items, 250);
+});
 
 $('#items-table').addEventListener('click', (e) => {
   const quick = e.target.closest('[data-quick-sort]');

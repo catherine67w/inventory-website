@@ -132,7 +132,13 @@ app.post('/api/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+// no-cache means "check with me first", not "never cache": the browser still
+// keeps a copy and still gets a cheap 304, but it can never serve a stale
+// app.js after an update. Without this, browsers cache heuristically and
+// people keep seeing yesterday's version after the app has changed.
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
+}));
 app.use('/files', express.static(UPLOAD_DIR));
 
 const upload = multer({
@@ -604,10 +610,19 @@ app.delete('/api/sales/:date', (req, res) => {
 
 app.get('/api/items', (req, res) => {
   const params = {};
-  const where = ["i.status = 'approved' OR i.status = 'review'"];
+  // The parentheses are load-bearing: AND binds tighter than OR, so without
+  // them "approved OR review AND <filter>" reads as "approved OR (review AND
+  // <filter>)" and every approved invoice comes back whatever was searched for.
+  const where = ["i.status IN ('approved', 'review')"];
   if (req.query.from) { where.push('i.invoice_date >= @from'); params.from = req.query.from; }
   if (req.query.to) { where.push('i.invoice_date <= @to'); params.to = req.query.to; }
-  if (req.query.q) { where.push('it.description LIKE @q'); params.q = `%${req.query.q}%`; }
+
+  // Searching only descriptions misses the way people actually look things up:
+  // by SKU off an invoice, by vendor, or by category.
+  if (req.query.q) {
+    where.push(`(it.description LIKE @q OR it.sku LIKE @q OR it.category LIKE @q OR v.name LIKE @q)`);
+    params.q = `%${req.query.q}%`;
+  }
 
   // Sorting happens in SQL rather than in the browser: the query is capped at
   // 400 rows, so sorting client-side would only reorder the top 400 by spend

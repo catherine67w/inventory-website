@@ -103,7 +103,7 @@ to sleep**, which takes the site down for everyone, so leave it open and plugged
 | **Dashboard** | Month-to-date purchases, net sales, COGS, food cost %, gross margin, and anything waiting for review. |
 | **Upload** | Drag in PDFs, photos, or CSVs. Each becomes a draft you review before it is saved — nothing is written to the books until you approve it. |
 | **Invoices** | Every invoice, filterable by date, vendor, status, or a search across vendor / invoice # / product. Click any row to edit. |
-| **Item prices** | Every product you have bought, with its latest price, the change since last time, its low/high, and total spend. Sortable by any column — including total spend cheapest-first or dearest-first. Click a row for full price history. |
+| **Item prices** | Every product you have bought, with its latest price, the change since last time, its low/high, and total spend. Search filters as you type — across product name, SKU, vendor, and category, in English or Chinese — and the date boxes narrow it to a period. Sortable by any column, including total spend cheapest-first or dearest-first. Click a row for full price history. |
 | **Product trends** | A line graph of one product across every invoice that bought it — price per unit, quantity, or spend. See below. |
 | **Vendors** | Spend and invoice count per vendor. Click one to search every item you have bought from them. |
 | **Net sales** | Upload a photo of your monthly sales summary and every day on it is read off, checked against the report's own month total, and listed for review — or type a day in by hand. This is what every percentage is measured against. |
