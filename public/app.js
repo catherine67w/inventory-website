@@ -362,7 +362,9 @@ loaders.invoices = async function loadInvoices() {
           <td class="num nowrap">${r.status === 'review'
             ? `<button class="btn small ghost" data-approve="${r.id}">Approve</button>
                <button class="btn small ghost" data-merge="${r.id}"
-                 title="This is another page of an invoice already here">Add to another</button>` : ''}</td>
+                 title="This is another page of an invoice already here">Add to another</button>`
+            : `<button class="btn small ghost" data-unapprove="${r.id}"
+                 title="Put this back in review so it can be edited or merged">Un-approve</button>`}</td>
         </tr>`).join('')}
       </tbody>
       <tfoot><tr>
@@ -393,6 +395,20 @@ document.addEventListener('click', async (e) => {
     loaders.invoices();
     return;
   }
+  // Approving is reversible: an invoice put back in review can be edited or
+  // have another page merged into it, and analysis limited to approved
+  // invoices stops counting it until it is approved again.
+  const unapprove = e.target.closest('[data-unapprove]');
+  if (unapprove) {
+    e.stopPropagation();
+    await api(`/api/invoices/${unapprove.dataset.unapprove}/status`, {
+      method: 'POST', body: JSON.stringify({ status: 'review' }),
+    });
+    toast('Moved back to review.');
+    loaders.invoices();
+    return;
+  }
+
   const merge = e.target.closest('[data-merge]');
   if (merge) {
     e.stopPropagation();

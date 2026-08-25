@@ -110,7 +110,7 @@ to sleep**, which takes the site down for everyone, so leave it open and plugged
 | --- | --- |
 | **Dashboard** | Month-to-date purchases, net sales, COGS, food cost %, gross margin, and anything waiting for review. |
 | **Upload** | Drag in PDFs, photos, or CSVs. Each becomes a draft you review before it is saved — nothing is written to the books until you approve it. |
-| **Invoices** | Every invoice, filterable by date, vendor, status, or a search across vendor / invoice # / product. Click any row to edit. Page two of a long invoice can be folded into page one — see below. |
+| **Invoices** | Every invoice, filterable by date, vendor, status, or a search across vendor / invoice # / product. Click any row to edit, **Approve** when it is checked, **Un-approve** to reopen it. Page two of a long invoice can be folded into page one — see below. |
 | **Item prices** | Every product you have bought, with its latest price, the change since last time, its low/high, and total spend. Search filters as you type — across product name, SKU, vendor, and category, in English or Chinese — and the date boxes narrow it to a period. Sortable by any column, including total spend cheapest-first or dearest-first. Click a row for full price history. |
 | **Product trends** | A line graph of one product across every invoice that bought it — price per unit, quantity, or spend. See below. |
 | **Vendors** | Spend and invoice count per vendor. Click one to search every item you have bought from them. |
@@ -199,6 +199,8 @@ so page two shows up as a separate entry with the leftover line items on it. The
 invoice whose line items add up to far less than its total.
 
 On the **Invoices** tab, any invoice still marked *Review* has an **Add to another** button.
+An invoice you have already approved can be put back with **Un-approve**, which is how you reopen
+one to edit it or to merge another page into it.
 That opens the page it belongs to and folds it in:
 
 - **The line items combine**, keeping their order and continuing the numbering.
