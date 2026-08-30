@@ -300,6 +300,12 @@ function renderDrafts() {
           </div>
         </div>
         ${d.error ? `<div class="draft-error">${esc(d.error)}</div>` : ''}
+        ${(d.duplicates || []).length ? `<p class="warn-text small">
+          This looks like an invoice already recorded:
+          ${d.duplicates.map((x) => `<strong>${x.invoice_number ? '#' + esc(x.invoice_number) : 'no number'}</strong>
+            · ${esc(x.invoice_date)} · ${money(x.total)} · ${x.item_count} line${x.item_count === 1 ? '' : 's'}`).join('; ')}.
+          Saving it again would count that money twice. Discard this one unless it is genuinely a
+          separate delivery.</p>` : ''}
       </div>`;
   }).join('');
 }
@@ -1915,7 +1921,22 @@ $('#ed-save').addEventListener('click', async () => {
     if (state.editor.id) {
       await api('/api/invoices/' + state.editor.id, { method: 'PUT', body: JSON.stringify(payload) });
     } else {
-      await api('/api/invoices', { method: 'POST', body: JSON.stringify(payload) });
+      try {
+        await api('/api/invoices', { method: 'POST', body: JSON.stringify(payload) });
+      } catch (err) {
+        if (!err.duplicates) throw err;
+        // Refused because this invoice is already on the books. Naming the
+        // existing one lets the person decide, rather than guessing for them.
+        const list = err.duplicates.map((x) =>
+          `• ${x.invoice_number ? '#' + x.invoice_number : 'no number'} · ${x.invoice_date} · ${money(x.total)} · ${x.item_count} line${x.item_count === 1 ? '' : 's'} · ${x.status}`).join('\n');
+        if (!confirm(`${err.vendor_name || 'This vendor'} already has an invoice that matches this one:\n\n${list}\n\nSaving this would count that money twice.\n\nSave anyway, as a genuinely separate invoice?`)) {
+          return;
+        }
+        await api('/api/invoices', {
+          method: 'POST',
+          body: JSON.stringify({ ...payload, allow_duplicate: true }),
+        });
+      }
     }
     if (state.editor.draftIndex !== null) {
       state.drafts.splice(state.editor.draftIndex, 1);

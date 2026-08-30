@@ -190,6 +190,25 @@ it. Clicking a point — or any row in the table underneath — opens that invoi
 The date range defaults to the product's whole history. Narrowing it re-draws from just that
 window; **Every purchase** puts it back.
 
+## Not recording the same invoice twice
+
+The app refuses to save an invoice it already has. A duplicate is the easiest mistake to make
+when working through a stack of paper and the hardest to spot afterwards — the books simply read
+high, and every line of the invoice looks legitimate.
+
+- **On upload**, a draft that matches an existing invoice says so before you save it, naming the
+  invoice already on the books with its date, total and line count.
+- **On save**, it is refused outright and you are asked to confirm. Only if you say it really is
+  a separate delivery does it go through.
+
+Matching is by **vendor and invoice number**, which is unique to that supplier — so a duplicate
+is caught even when the date was read differently. Invoices that print no number at all are
+matched on **vendor, date and amount** instead, which is the same judgement a person makes
+holding two pieces of paper.
+
+Editing an existing invoice is never blocked, and neither is a new invoice from a vendor already
+on the books.
+
 ## Invoices longer than one page
 
 A long invoice gets photographed a page at a time, and each photo arrives as its own invoice —

@@ -387,7 +387,53 @@ function writeInvoice(payload, id = null) {
   return run();
 }
 
+// Invoices that already look like this one.
+//
+// A supplier's invoice number is unique to them, so vendor + number is the
+// strong signal. Plenty of invoices print no number at all, though — those are
+// matched on vendor, date and amount instead, which is the same judgement a
+// person makes looking at two pieces of paper.
+function findDuplicates({ vendor_name, invoice_number, invoice_date, total, exclude_id = null }) {
+  const vendor = db.prepare('SELECT id FROM vendors WHERE name = ?').get(String(vendor_name || '').trim());
+  if (!vendor) return [];
+
+  const number = String(invoice_number || '').trim();
+  const params = { vendor_id: vendor.id, exclude: exclude_id || -1 };
+  let match;
+
+  if (number) {
+    match = 'i.invoice_number = @number COLLATE NOCASE';
+    params.number = number;
+  } else {
+    match = 'i.invoice_number = \'\' AND i.invoice_date = @date AND ABS(i.total - @total) < 0.005';
+    params.date = String(invoice_date || '');
+    params.total = money(total);
+  }
+
+  return db.prepare(`
+    SELECT i.id, i.invoice_number, i.invoice_date, i.total, i.status,
+           (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = i.id) AS item_count
+    FROM invoices i
+    WHERE i.vendor_id = @vendor_id AND i.id != @exclude AND ${match}
+    ORDER BY i.id
+  `).all(params);
+}
+
 app.post('/api/invoices', (req, res) => {
+  // Saving the same invoice twice is the easiest mistake to make and the
+  // hardest to spot afterwards: the books simply read high, and every line of
+  // it looks legitimate. So it is refused once, with the existing invoice
+  // named, and only goes through if the caller says it really is a separate one.
+  if (!req.body.allow_duplicate) {
+    const clashes = findDuplicates(req.body);
+    if (clashes.length) {
+      return res.status(409).json({
+        error: 'duplicate',
+        duplicates: clashes,
+        vendor_name: String(req.body.vendor_name || ''),
+      });
+    }
+  }
   const id = writeInvoice(req.body);
   res.json({ id });
 });
@@ -554,6 +600,9 @@ app.post('/api/upload', upload.array('files', 20), wrap(async (req, res) => {
       const { data, usage } = await parseFile(file.path, file.originalname);
       entry.parsed = data;
       entry.usage = usage;
+      // Named on the draft, before anyone clicks save. Uploading the same
+      // invoice twice is easy when working through a stack of paper.
+      entry.duplicates = findDuplicates(data);
     } catch (err) {
       entry.error = err.message;
       entry.usage = { input_tokens: 0, output_tokens: 0, cost: 0, model: null };
