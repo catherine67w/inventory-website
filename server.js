@@ -14,7 +14,7 @@ const { CATEGORIES, GROUPS, NAMES, groupOf } = require('./categories');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
+const UPLOAD_DIR = path.join(process.env.DATA_DIR || __dirname, 'uploads');
 
 app.use(express.json({ limit: '5mb' }));
 
@@ -33,6 +33,13 @@ const OPEN_PATHS = new Set(['/login.html', '/styles.css', '/api/login', '/api/se
 
 // Express needs this to read the real client address behind any proxy.
 app.set('trust proxy', true);
+
+// Secure means "only ever send this cookie over HTTPS". trust proxy above is
+// what makes req.secure reflect the original request rather than the plain
+// HTTP hop from the host's proxy. It stays off on plain http://localhost, or
+// signing in on this Mac would stop working.
+const cookieFlags = (req) =>
+  `HttpOnly; SameSite=Lax; Path=/${req.secure || process.env.FORCE_SECURE_COOKIES === '1' ? '; Secure' : ''}`;
 
 const hmacKey = () => crypto.createHash('sha256').update('invoice-cogs::' + PASSWORD).digest();
 const signExpiry = (exp) => crypto.createHmac('sha256', hmacKey()).update(String(exp)).digest('hex');
@@ -124,12 +131,12 @@ app.post('/api/login', (req, res) => {
 
   auth.clearFailures(req);
   res.setHeader('Set-Cookie',
-    `${COOKIE_NAME}=${issueToken()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_HOURS * 3600}`);
+    `${COOKIE_NAME}=${issueToken()}; ${cookieFlags(req)}; Max-Age=${SESSION_HOURS * 3600}`);
   res.json({ ok: true });
 });
 
 app.post('/api/logout', (req, res) => {
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; ${cookieFlags(req)}; Max-Age=0`);
   res.json({ ok: true });
 });
 
@@ -540,7 +547,7 @@ app.post('/api/upload', upload.array('files', 20), wrap(async (req, res) => {
     try {
       // An iPhone HEIC becomes a JPEG before anything else touches it, so the
       // file that gets read, shown and backed up is one everything can open.
-      normalizeUpload(file);
+      await normalizeUpload(file);
       entry.file = file.filename;
       entry.original_name = file.originalname;
 
@@ -620,7 +627,7 @@ app.post('/api/sales/upload', upload.array('files', 20), wrap(async (req, res) =
   for (const file of files) {
     const entry = { file: file.filename, original_name: file.originalname };
     try {
-      normalizeUpload(file);
+      await normalizeUpload(file);
       entry.file = file.filename;
       entry.original_name = file.originalname;
 

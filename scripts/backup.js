@@ -11,8 +11,9 @@ const path = require('path');
 const Database = require('better-sqlite3');
 
 const ROOT = path.join(__dirname, '..');
-const SOURCE = path.join(ROOT, 'data.db');
-const UPLOADS = path.join(ROOT, 'uploads');
+const DATA_DIR = process.env.DATA_DIR || ROOT;
+const SOURCE = path.join(DATA_DIR, 'data.db');
+const UPLOADS = path.join(DATA_DIR, 'uploads');
 
 function stamp() {
   const now = new Date();

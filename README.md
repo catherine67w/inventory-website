@@ -54,10 +54,8 @@ the app still works fully: **CSV import** and **manual entry** need no key.
 **iPhone HEIC photos work.** An iPhone shoots HEIC by default, and nothing else reads it — not
 the extraction, not Chrome, not most backup viewers. So an uploaded HEIC is converted to JPEG
 the moment it arrives, and the JPEG is what gets stored, read, displayed and backed up. The
-original stays on your phone. Conversion uses `sips`, which is built into macOS, so there is
-nothing to install — but it does mean HEIC conversion only works when the app is running on a
-Mac. On any other machine the upload says so and points you at
-**Settings → Camera → Formats → Most Compatible**, which makes the iPhone shoot JPEGs instead.
+original stays on your phone. On a Mac it converts with `sips`, which is built in; anywhere else
+it falls back to a bundled JavaScript decoder, so a server needs nothing installed either way.
 
 Get a key at https://console.anthropic.com. Reading an invoice costs a few cents; the exact
 figure for every invoice is shown on the Dashboard.
@@ -350,6 +348,32 @@ If a line total is missing it is calculated from quantity × unit price.
   recalculates unit price.
 - Vendors are created automatically the first time you save an invoice for them.
 - Deleting an invoice removes its line items and its uploaded file.
+
+## Putting it on a server
+
+The app runs on this Mac as-is. To put it online — so it works when the laptop is closed, and
+staff can reach it from anywhere — it needs a host that runs Node.js **with a disk that survives
+deploys**. That last part matters: most hosts replace the app folder on every deploy, which would
+take the database and every invoice photo with it.
+
+Three settings make that work:
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| `DATA_DIR` | the mount path of the attached disk | Keeps `data.db` and `uploads/` off the app folder, so deploys cannot wipe them |
+| Start command | `node server.js` | The default `npm start` wraps it in `caffeinate`, which is macOS-only |
+| `ANTHROPIC_API_KEY`, `APP_PASSWORD` | as in `.env` | Set as environment variables on the host, never committed |
+
+Everything else is automatic. The session cookie marks itself `Secure` as soon as it sees the
+request arrived over HTTPS, and stays plain on `http://localhost` so signing in still works here.
+
+**Linking it from an existing website:** point a subdomain at the host — `invoices.yourdomain.com`
+— and link to it. **Link, don't embed in an iframe.** Inside a frame on another domain the session
+cookie becomes a third-party cookie, which Safari blocks outright, so signing in would loop
+forever.
+
+**iPhone photos work on a server.** HEIC conversion uses macOS `sips` where it exists and falls
+back to a bundled JavaScript decoder everywhere else, so nothing has to be installed on the host.
 
 ## Backing it up
 

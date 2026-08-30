@@ -1,7 +1,14 @@
 const path = require('path');
+const fs = require('fs');
 const Database = require('better-sqlite3');
 
-const db = new Database(path.join(__dirname, 'data.db'));
+// On this Mac the data sits next to the app. On a server the app folder is
+// replaced on every deploy, so DATA_DIR points at a disk that survives that —
+// without it, deploying would wipe every invoice.
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const db = new Database(path.join(DATA_DIR, 'data.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -180,4 +187,4 @@ function vendorId(name) {
   return db.prepare('INSERT INTO vendors (name) VALUES (?)').run(clean).lastInsertRowid;
 }
 
-module.exports = { db, vendorId };
+module.exports = { DATA_DIR, db, vendorId };

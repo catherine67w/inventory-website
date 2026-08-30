@@ -17,6 +17,9 @@ const HEIC_TYPES = ['.heic', '.heif'];
 // 3000px keeps small print on an invoice legible with room to spare.
 const MAX_EDGE = 3000;
 
+// The API rejects images past about 5 MB once base64-encoded, so stay well under.
+const MAX_BYTES = 3_500_000;
+
 const isHeic = (name) => HEIC_TYPES.includes(path.extname(name || '').toLowerCase());
 
 function sipsAvailable() {
@@ -28,25 +31,43 @@ function sipsAvailable() {
   }
 }
 
+// macOS route: fast, no dependency, and it resizes in the same pass.
+function convertWithSips(filePath, jpegPath) {
+  execFileSync('sips', [
+    '-s', 'format', 'jpeg',
+    '-s', 'formatOptions', 'high',
+    '-Z', String(MAX_EDGE),
+    filePath, '--out', jpegPath,
+  ], { stdio: 'ignore', timeout: 60_000 });
+}
+
+// Everywhere else: a pure-JavaScript decoder, so a Linux server needs nothing
+// installed. It cannot resize, so quality is the lever for keeping the file
+// under the API's per-image limit — dropping it only on the photos that need it
+// rather than softening every one.
+async function convertWithLibrary(filePath, jpegPath) {
+  const heicConvert = require('heic-convert');
+  const input = await fs.promises.readFile(filePath);
+
+  let output = Buffer.from(await heicConvert({ buffer: input, format: 'JPEG', quality: 0.85 }));
+  if (output.length > MAX_BYTES) {
+    output = Buffer.from(await heicConvert({ buffer: input, format: 'JPEG', quality: 0.55 }));
+  }
+  await fs.promises.writeFile(jpegPath, output);
+}
+
 // Converts in place: writes a .jpg beside the original, removes the original,
 // and returns the new path. Throws with a readable message on failure.
-function heicToJpeg(filePath) {
-  if (!sipsAvailable()) {
-    throw new Error('HEIC photos can only be converted on a Mac. On your iPhone, ' +
-      'Settings → Camera → Formats → Most Compatible makes it take JPEGs instead.');
-  }
-
+async function heicToJpeg(filePath) {
   const jpegPath = filePath.replace(/\.[^.]+$/, '') + '.jpg';
+
   try {
-    execFileSync('sips', [
-      '-s', 'format', 'jpeg',
-      '-s', 'formatOptions', 'high',
-      '-Z', String(MAX_EDGE),
-      filePath, '--out', jpegPath,
-    ], { stdio: 'ignore', timeout: 60_000 });
-  } catch {
+    if (sipsAvailable()) convertWithSips(filePath, jpegPath);
+    else await convertWithLibrary(filePath, jpegPath);
+  } catch (err) {
     throw new Error('This HEIC photo could not be converted. Send it to yourself as a ' +
-      'JPEG, or take the photo again with Most Compatible turned on.');
+      'JPEG, or take the photo again with Most Compatible turned on. ' +
+      `(${err.message})`);
   }
 
   if (!fs.existsSync(jpegPath) || fs.statSync(jpegPath).size === 0) {
@@ -60,10 +81,10 @@ function heicToJpeg(filePath) {
 }
 
 // Rewrites a multer file in place so everything after this point sees a JPEG.
-function normalizeUpload(file) {
+async function normalizeUpload(file) {
   if (!isHeic(file.originalname) && !isHeic(file.path)) return file;
 
-  const jpegPath = heicToJpeg(file.path);
+  const jpegPath = await heicToJpeg(file.path);
   file.path = jpegPath;
   file.filename = path.basename(jpegPath);
   // The display name keeps its own extension swapped too, so the invoice does
