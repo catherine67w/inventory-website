@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 const { NAMES } = require('./categories');
-const { readWorkbook } = require('./spreadsheet');
+const { readWorkbook, readZipTextFiles } = require('./spreadsheet');
 
 const MODEL = 'claude-opus-5';
 
@@ -457,6 +457,17 @@ const NUMBER = (cell) => (cell && typeof cell.value === 'number' ? cell.value : 
 function cellDate(cell) {
   if (!cell) return '';
   if (cell.date) return cell.date;
+
+  // Toast writes dates as a bare 20260701. Only a plausible calendar date in
+  // that shape counts, so an ordinary eight-digit number is not mistaken for one.
+  const compact = String(cell.value ?? '').trim();
+  if (/^\d{8}$/.test(compact)) {
+    const [y, m, d] = [compact.slice(0, 4), compact.slice(4, 6), compact.slice(6)];
+    if (+y >= 1900 && +y <= 2100 && +m >= 1 && +m <= 12 && +d >= 1 && +d <= 31) {
+      return `${y}-${m}-${d}`;
+    }
+  }
+
   const text = TEXT(cell);
   if (ISO.test(text)) return text;
   const us = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
@@ -476,9 +487,19 @@ function readDailyRows(rows) {
   for (let h = 0; h < rows.length; h++) {
     const header = rows[h] || [];
     const labels = header.map((c) => TEXT(c).toLowerCase());
-    const dateCol = labels.findIndex((l) => /^(business\s+)?date$|^day$|^business day$/.test(l));
     const netCol = labels.findIndex((l) => /net\s*sales|net\s*revenue/.test(l));
-    if (dateCol < 0 || netCol < 0) continue;
+    if (netCol < 0) continue;
+
+    // Headers vary — "Business Date", "Day", or Toast's literal "yyyyMMdd". When
+    // the name gives nothing away, the column whose values actually parse as
+    // dates is the date column.
+    let dateCol = labels.findIndex((l) => /^(business\s+)?date$|^day$|^business day$|^y{2,4}[-/ ]?m{2}[-/ ]?d{2}$/.test(l));
+    if (dateCol < 0) {
+      const body = rows.slice(h + 1, h + 6);
+      dateCol = header.findIndex((_, col) =>
+        body.length && body.every((r) => cellDate(r[col])));
+    }
+    if (dateCol < 0) continue;
 
     const grossCol = labels.findIndex((l) => /gross\s*sales/.test(l));
     const taxCol = labels.findIndex((l) => /^tax|tax\s*amount/.test(l));
@@ -507,13 +528,21 @@ function readDailyRows(rows) {
 // A labelled figure — "Net sales | 209682.38" — taken from the first section
 // that carries it, which on a Toast summary is the revenue summary at the top.
 function labelledFigure(rows, pattern) {
-  for (const row of rows) {
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
     for (let i = 0; i < row.length; i++) {
       if (!pattern.test(TEXT(row[i]))) continue;
+
+      // "Net sales | 209682.38" — the figure sits beside its label.
       for (let j = i + 1; j < row.length; j++) {
         const value = NUMBER(row[j]);
         if (value !== null) return value;
       }
+
+      // A column layout instead: the label heads the column and the figure is
+      // in the row beneath it. Toast's CSV summaries are written this way.
+      const below = rows[r + 1] && NUMBER(rows[r + 1][i]);
+      if (below !== null && below !== undefined) return below;
     }
   }
   return null;
@@ -533,6 +562,50 @@ function coveredRange(rows, originalName) {
     return { start_date: `${month[1]}-${month[2]}-01`, end_date: `${month[1]}-${month[2]}-${last}` };
   }
   return { start_date: '', end_date: '' };
+}
+
+// A delimited file becomes the same rows-of-cells shape a spreadsheet does, so
+// one set of reading rules serves both.
+function rowsFromDelimited(text) {
+  const lines = text.replace(/^\ufeff/, '').split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return [];
+  const delim = (lines[0].match(/\t/g) || []).length > (lines[0].match(/,/g) || []).length ? '\t' : ',';
+  return lines.map((line) => splitCsvLine(line, delim).map((raw) => {
+    if (raw === '') return null;
+    // Money arrives as text here; anything that reads cleanly as a number is
+    // treated as one so the totals add up rather than concatenate.
+    const cleaned = raw.replace(/[$,]/g, '');
+    const asNumber = /^-?\d+(\.\d+)?$/.test(cleaned) ? Number(cleaned) : null;
+    return { value: asNumber === null ? raw : asNumber, date: null };
+  }));
+}
+
+// Toast exports its whole report set as one zip. The file that matters is the
+// day-by-day one; the rest are summaries already covered elsewhere.
+function salesRowsFromZip(filePath) {
+  const files = readZipTextFiles(filePath);
+  const names = [...files.keys()].filter((n) => /\.(csv|tsv|txt)$/i.test(n));
+  if (!names.length) throw new Error('That zip has no CSV files in it.');
+
+  // Prefer a file that names itself as the daily breakdown, then fall back to
+  // any file that actually has a date column and a net sales column.
+  const preferred = names.find((n) => /sales?\s*by\s*day|daily/i.test(n));
+  const ordered = preferred ? [preferred, ...names.filter((n) => n !== preferred)] : names;
+
+  // The archive's own summary is the figure the days should add up to — a real
+  // cross-check on the reading, from a different file than the days came from.
+  let periodTotal = 0;
+  for (const name of names) {
+    if (!/net\s*sales\s*summary|revenue\s*summary/i.test(name)) continue;
+    const figure = labelledFigure(rowsFromDelimited(files.get(name)), /^net\s*sales$/i);
+    if (figure) { periodTotal = figure; break; }
+  }
+
+  for (const name of ordered) {
+    const rows = rowsFromDelimited(files.get(name));
+    if (readDailyRows(rows).length) return { name, rows, periodTotal };
+  }
+  throw new Error('None of the files in that zip lists sales day by day. Look for a "Sales by day" report.');
 }
 
 function parseSalesSpreadsheet(filePath, originalName) {
@@ -573,10 +646,55 @@ function parseSalesSpreadsheet(filePath, originalName) {
 }
 
 const SPREADSHEET_TYPES = ['.xlsx', '.xlsm'];
+const DELIMITED_TYPES = ['.csv', '.tsv', '.txt'];
+
+// A CSV or a zip of them is read the same way a spreadsheet is: locally, exactly,
+// and at no cost.
+function parseSalesDelimited(filePath, originalName, rows) {
+  const entries = readDailyRows(rows);
+  const range = coveredRange(rows, originalName);
+  if (!entries.length) {
+    const net = labelledFigure(rows, /^net\s*sales$/i);
+    if (net === null) {
+      throw new Error('No day-by-day sales were found in that file. It needs a date column and a net sales column.');
+    }
+    return {
+      entries: [],
+      period: { label: 'Net sales', ...range, net_sales: net },
+      gross_sales: labelledFigure(rows, /^gross\s*sales$/i) || 0,
+      tax: labelledFigure(rows, /^tax\s*amount$/i) || 0,
+      reading_note: '',
+      usage: { input_tokens: 0, output_tokens: 0, cost: 0 },
+    };
+  }
+  return {
+    entries,
+    period: {
+      label: 'file total',
+      start_date: range.start_date || entries[0].date,
+      end_date: range.end_date || entries[entries.length - 1].date,
+      net_sales: labelledFigure(rows.filter((r) => isTotalRow(TEXT(r[0]))), /net\s*sales|^total$/i) || 0,
+    },
+    reading_note: '',
+    usage: { input_tokens: 0, output_tokens: 0, cost: 0 },
+  };
+}
 
 async function parseSalesFile(filePath, originalName) {
   const ext = path.extname(originalName || filePath).toLowerCase();
   if (SPREADSHEET_TYPES.includes(ext)) return parseSalesSpreadsheet(filePath, originalName);
+  if (DELIMITED_TYPES.includes(ext)) {
+    return parseSalesDelimited(filePath, originalName,
+      rowsFromDelimited(fs.readFileSync(filePath, 'utf8')));
+  }
+  if (ext === '.zip') {
+    const { rows, periodTotal } = salesRowsFromZip(filePath);
+    const parsed = parseSalesDelimited(filePath, originalName, rows);
+    if (periodTotal && !parsed.period.net_sales) {
+      parsed.period = { ...parsed.period, label: 'the report\'s own net sales total', net_sales: periodTotal };
+    }
+    return parsed;
+  }
   if (ext === '.xls') {
     throw new Error('This is an older .xls file. Open it and save it again as .xlsx, then upload that.');
   }

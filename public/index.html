@@ -179,16 +179,17 @@
           it is read off and listed for review. The days are checked against the report's own month
           total before you save, and any day missing from the read is flagged. End-of-day reports
           work the same way.</p>
-        <p class="muted small">A <strong>Toast .xlsx export</strong> can be dropped in as it comes.
-          The figures are read straight out of the spreadsheet — exact, instant, and free, with no
-          reading charge.</p>
+        <p class="muted small">A <strong>Toast export</strong> can be dropped in exactly as it
+          downloads — spreadsheet, CSV, or the whole <strong>.zip</strong> of reports. The zip is
+          searched for the day-by-day file, and the days are checked against the summary file
+          beside it. Read straight from the file: exact, instant, and free.</p>
 
         <div class="dropzone compact" id="sales-dropzone">
-          <input type="file" id="sales-file-input" multiple accept=".pdf,.png,.jpg,.jpeg,.heic,.heif,.gif,.webp,.xlsx,.xlsm" hidden>
+          <input type="file" id="sales-file-input" multiple accept=".pdf,.png,.jpg,.jpeg,.heic,.heif,.gif,.webp,.xlsx,.xlsm,.csv,.tsv,.zip" hidden>
           <div class="dropzone-inner">
             <span class="dz-icon">📈</span>
             <p><strong>Drop sales reports here</strong> or <button class="link" id="sales-browse-btn" type="button">browse files</button></p>
-            <small>Monthly summary or single day — photo (incl. HEIC), screenshot, PDF, or .xlsx</small>
+            <small>Photo, screenshot, PDF, spreadsheet, CSV, or a Toast .zip</small>
           </div>
         </div>
 

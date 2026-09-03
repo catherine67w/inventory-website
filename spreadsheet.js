@@ -194,4 +194,21 @@ function readWorkbook(filePath) {
   return sheets;
 }
 
-module.exports = { readWorkbook, serialToDate };
+// Toast delivers a whole folder of CSVs as one zip, so the container reader
+// above earns a second use: pulling those files out without unpacking to disk.
+function readZipTextFiles(filePath) {
+  const buf = fs.readFileSync(filePath);
+  const out = new Map();
+  for (const [name, entry] of readEntries(buf)) {
+    if (name.endsWith('/')) continue;
+    try {
+      out.set(name, readFile(buf, entry).toString('utf8'));
+    } catch {
+      // A file this reader cannot inflate is skipped rather than failing the
+      // whole archive — the one that matters may still be readable.
+    }
+  }
+  return out;
+}
+
+module.exports = { readWorkbook, readZipTextFiles, serialToDate };

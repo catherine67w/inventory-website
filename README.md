@@ -286,10 +286,17 @@ total are never treated as days.
 Every figure is editable in the review table, and a row that is not a day can be removed with the
 ✕ beside it. A day the restaurant was closed is kept as a zero rather than dropped.
 
-**A Toast .xlsx export can be dropped in as it comes.** Spreadsheets are read directly — exact
-figures, instantly, with no API key and no reading charge. Photos and PDFs still go through
-Claude; spreadsheets never do. A day-by-day sheet becomes one row per day; a summary sheet gives
-its period total.
+**A Toast export can be dropped in exactly as it downloads** — spreadsheet, CSV, or the whole
+**.zip** of reports. These are read directly: exact figures, instantly, with no API key and no
+reading charge. Photos and PDFs still go through Claude; files never do.
+
+Toast's zip holds around twenty CSVs. The app finds the day-by-day one (`Sales by day.csv`) and
+cross-checks its days against the separate summary file in the same archive — two independent
+figures from the same export agreeing is a real check on the reading, not a restatement.
+
+Dates are read however they are written: a spreadsheet's internal date, `2026-07-01`, `7/1/2026`,
+or Toast's bare `20260701`. When the date column has an unhelpful header, the column whose values
+parse as dates is used instead.
 
 If a summary shows **only a month total** with no day-by-day breakdown — which is what Toast's
 Sales Summary export gives — it is offered as a single entry dated the last day of the period.
