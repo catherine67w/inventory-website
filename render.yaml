@@ -1,0 +1,35 @@
+# Render Blueprint — lets the host set itself up from this file instead of
+# someone clicking through a dozen settings and missing the one that matters.
+#
+# The one that matters is the disk. Render replaces the app folder on every
+# deploy, so the database and invoice photos live on a separate persistent
+# disk at /var/data, and DATA_DIR tells the app to use it. Without that, the
+# first deploy after go-live would wipe every invoice.
+
+services:
+  - type: web
+    name: little-sheep-invoices
+    runtime: node
+    # A persistent disk needs a paid instance; the free tier also sleeps when
+    # idle and loses its filesystem, which would lose the data.
+    plan: starter
+    # Closest region to East Rutherford, NJ.
+    region: virginia
+    buildCommand: npm ci
+    # Not `npm start`: that wraps the server in caffeinate, which is macOS-only.
+    startCommand: node server.js
+    # The sign-in page is reachable without a session, so it answers health checks.
+    healthCheckPath: /login.html
+    disk:
+      name: invoice-data
+      mountPath: /var/data
+      # About three years of invoice photos. Disks can be grown later, not shrunk.
+      sizeGB: 2
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      # Secrets are typed into Render's dashboard during setup, never committed.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: APP_PASSWORD
+        sync: false

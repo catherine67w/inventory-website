@@ -20,5 +20,8 @@
     "heic-convert": "^2.1.0",
     "multer": "^2.2.0",
     "qrcode": "^1.5.4"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }
