@@ -2,7 +2,7 @@
   "name": "invoice-cogs",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "start": "caffeinate -is node server.js",
     "start:nocaffeine": "node server.js",
