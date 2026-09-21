@@ -1,12 +1,28 @@
 # Invoice & Food Cost
 
 An xtraCHEF-style invoice and cost management system for a single restaurant. Upload supplier
-invoices, have the line items read out automatically, type in your own net sales, and analyze
-profit margin over any date range you choose.
+invoices, have the line items read out automatically, bring in net sales, and analyze profit
+margin over any date range you choose.
 
-No Toast integration — net sales are entered by hand on purpose.
+**Toast is not connected to, and does not need to be.** Toast's own export — the whole zip, as it
+downloads — is read directly, so sales arrive exactly and for free, with nothing to authorise and
+no connection that can break. Days can also be typed in by hand.
 
-## Running it
+## Where it runs
+
+Two places, deliberately:
+
+| | Address | What it is |
+| --- | --- | --- |
+| **Live** | https://little-sheep-invoices.onrender.com | What staff use. Runs whether or not the Mac is on. |
+| **Local** | http://localhost:4000 | The same app on the Mac, for working on it |
+
+They have **separate databases**. Data loaded into one does not appear in the other.
+
+The live site redeploys itself whenever `main` is pushed to GitHub, so a fix here reaches it in
+about a minute.
+
+## Running it locally
 
 ```bash
 npm install
@@ -16,8 +32,9 @@ npm start
 Then open **http://localhost:4000**.
 
 Data lives in `data.db` (SQLite) next to the app, and uploaded invoice files in `uploads/`.
-Both are created on first run. Nothing leaves your machine except the invoice images you
-choose to have read automatically.
+Both are created on first run. On the server both live on a separate disk instead — see
+**Putting it on a server**. Nothing leaves the machine except the invoice images you choose to
+have read automatically.
 
 ## Starting it without the Terminal
 
@@ -88,7 +105,11 @@ the machine.
 
 ## Letting coworkers use it
 
-While the app is running, anyone on the same Wi-Fi can reach it. Find the address with:
+Send them **https://little-sheep-invoices.onrender.com** and the password. It works from anywhere,
+on any device, whether or not the Mac is on — that is the whole point of the live site.
+
+The rest of this section is the older way, still useful for reaching the Mac's own copy while
+working on it. While the local app is running, anyone on the same Wi-Fi can reach it:
 
 ```bash
 echo "http://$(scutil --get LocalHostName).local:4000"
@@ -112,7 +133,7 @@ to sleep**, which takes the site down for everyone, so leave it open and plugged
 | **Item prices** | Every product you have bought, with its latest price, the change since last time, its low/high, and total spend. Search filters as you type — across product name, SKU, vendor, and category, in English or Chinese — and the date boxes narrow it to a period. Sortable by any column, including total spend cheapest-first or dearest-first. Click a row for full price history. |
 | **Product trends** | A line graph of one product across every invoice that bought it — price per unit, quantity, or spend. See below. |
 | **Vendors** | Spend and invoice count per vendor. Click one to search every item you have bought from them. |
-| **Net sales** | Upload a photo of your monthly sales summary and every day on it is read off, checked against the report's own month total, and listed for review — or type a day in by hand. This is what every percentage is measured against. |
+| **Net sales** | Drop in Toast's export — the whole zip, a spreadsheet, a CSV — or a photo of the report, and every day is read off, cross-checked against the report's own total, and listed for review. Days can also be typed in by hand. This is what every percentage is measured against. |
 | **Menu** | Every dish and drink with names, codes, and prices — see below. |
 | **Profit analysis** | The custom date range analysis — see below. |
 
@@ -377,12 +398,22 @@ If a line total is missing it is calculated from quantity × unit price.
 
 ## Putting it on a server
 
-The app runs on this Mac as-is. To put it online — so it works when the laptop is closed, and
-staff can reach it from anywhere — it needs a host that runs Node.js **with a disk that survives
-deploys**. That last part matters: most hosts replace the app folder on every deploy, which would
-take the database and every invoice photo with it.
+**It is on one.** The live site runs on Render at
+https://little-sheep-invoices.onrender.com, created from `render.yaml` in this repo, so the
+service configures itself rather than depending on someone setting a dozen fields correctly.
 
-Three settings make that work:
+**To change the code**, push to `main`. Render rebuilds and redeploys on its own.
+
+**To change a secret** (the API key, the password), edit it in Render's **Environment** settings —
+not in this repo. `.env` is the Mac's copy only; the two are independent, and the password can
+differ between them.
+
+**Watch the disk.** Render replaces the app folder on every deploy, so the database and invoice
+photos live on a separate disk mounted at `/var/data`, with `DATA_DIR` pointing there. If that
+disk is ever missing, the app still works perfectly and quietly loses everything at the next
+deploy — so it is worth confirming under **Settings → Disks** after any change to the service.
+
+Three settings make that work, all of them already in `render.yaml`:
 
 | Setting | Value | Why |
 | --- | --- | --- |
