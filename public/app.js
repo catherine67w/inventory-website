@@ -2307,6 +2307,30 @@ $('#mi-recipe').addEventListener('click', async (e) => {
 
 /* ---------- security ---------- */
 
+$('#import-go').addEventListener('click', async () => {
+  const dbFile = $('#import-db').files[0];
+  const zipFile = $('#import-files').files[0];
+  const out = $('#import-result');
+  if (!dbFile) { out.innerHTML = '<p class="warn-text small">Choose the backup .db file first.</p>'; return; }
+
+  const form = new FormData();
+  form.append('database', dbFile);
+  if (zipFile) form.append('files', zipFile);
+
+  out.innerHTML = '<p class="muted small">Importing…</p>';
+  try {
+    const r = await api('/api/import', { method: 'POST', body: form });
+    out.innerHTML = `<div class="sales-recon ok"><span>Imported
+      <strong>${r.imported.invoices}</strong> invoices,
+      <strong>${r.imported.line_items}</strong> line items,
+      <strong>${r.imported.sales_days}</strong> sales days,
+      <strong>${r.imported.vendors}</strong> vendors${r.files ? `, and <strong>${r.files}</strong> photos` : ''}.
+      Reload the page to see them.</span></div>`;
+  } catch (err) {
+    out.innerHTML = `<div class="sales-recon off"><span>${esc(err.message)}</span></div>`;
+  }
+});
+
 loaders.security = async function loadSecurity() {
   const status = await api('/api/2fa/status');
   state.twofa = status;

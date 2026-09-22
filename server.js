@@ -10,6 +10,8 @@ const { db, vendorId } = require('./db');
 const { parseFile, parseSalesFile, apiKeyProblem, PRICING, MODEL } = require('./parse');
 const auth = require('./auth');
 const { normalizeUpload } = require('./images');
+const { readZipBinaryFiles } = require('./spreadsheet');
+const Database = require('better-sqlite3');
 const { CATEGORIES, GROUPS, NAMES, groupOf } = require('./categories');
 
 const app = express();
@@ -614,6 +616,86 @@ app.post('/api/upload', upload.array('files', 20), wrap(async (req, res) => {
     results.push(entry);
   }
   res.json({ results });
+}));
+
+// --- moving data onto a new server ----------------------------------------
+
+// Restores a backup made by `npm run backup` into THIS app: the database, and
+// optionally the invoice photos as a zip.
+//
+// It refuses unless this app is empty of invoices and sales. That single rule
+// is what makes it safe to leave in place — it can seed a fresh server, and it
+// can never overwrite a working one, whoever clicks it and whenever.
+app.post('/api/import', upload.fields([
+  { name: 'database', maxCount: 1 },
+  { name: 'files', maxCount: 1 },
+]), wrap(async (req, res) => {
+  const here = db.prepare(
+    'SELECT (SELECT COUNT(*) FROM invoices) AS invoices, (SELECT COUNT(*) FROM sales) AS sales').get();
+  if (here.invoices || here.sales) {
+    return res.status(409).json({
+      error: `This app already holds ${here.invoices} invoice${here.invoices === 1 ? '' : 's'} and ` +
+        `${here.sales} sales day${here.sales === 1 ? '' : 's'}. Importing only runs into an empty app, ` +
+        'so it cannot write over data that is already here.',
+    });
+  }
+
+  const dbUpload = ((req.files || {}).database || [])[0];
+  if (!dbUpload) return res.status(400).json({ error: 'Choose the backup .db file.' });
+
+  // Read the backup before trusting it: a wrong file should fail here, with a
+  // sentence, rather than halfway through writing.
+  let source;
+  try {
+    source = new Database(dbUpload.path, { readonly: true, fileMustExist: true });
+    source.prepare('SELECT COUNT(*) FROM invoices').get();
+  } catch {
+    if (source) try { source.close(); } catch { /* already closed */ }
+    return res.status(400).json({ error: 'That file is not a backup of this app. Use one from the backups folder.' });
+  }
+  const incoming = {
+    vendors: source.prepare('SELECT COUNT(*) AS n FROM vendors').get().n,
+    invoices: source.prepare('SELECT COUNT(*) AS n FROM invoices').get().n,
+    line_items: source.prepare('SELECT COUNT(*) AS n FROM invoice_items').get().n,
+    sales_days: source.prepare('SELECT COUNT(*) AS n FROM sales').get().n,
+  };
+  source.close();
+
+  // Copied table by table with the ids preserved, so line items still point at
+  // their invoice and merged pages at theirs. The menu is replaced wholesale:
+  // this app seeds a fresh copy on first run, and the backup's is the edited one.
+  db.prepare('ATTACH DATABASE ? AS backup').run(dbUpload.path);
+  try {
+    db.transaction(() => {
+      db.exec('DELETE FROM menu_item_ingredients; DELETE FROM menu_items; DELETE FROM menu_sections;');
+      for (const table of [
+        'vendors', 'invoices', 'invoice_items', 'invoice_pages', 'sales',
+        'menu_sections', 'menu_items', 'menu_item_ingredients',
+      ]) {
+        db.exec(`INSERT INTO main.${table} SELECT * FROM backup.${table}`);
+      }
+    })();
+  } finally {
+    db.exec('DETACH DATABASE backup');
+  }
+
+  // The photos, if a zip of the uploads folder came too.
+  let restoredFiles = 0;
+  const filesUpload = ((req.files || {}).files || [])[0];
+  if (filesUpload) {
+    for (const [name, bytes] of readZipBinaryFiles(filesUpload.path)) {
+      // Flatten to a bare filename: nothing from an archive should be able to
+      // choose where on disk it lands.
+      const safe = path.basename(name);
+      if (!safe || safe.startsWith('.')) continue;
+      await fs.promises.writeFile(path.join(UPLOAD_DIR, safe), bytes);
+      restoredFiles += 1;
+    }
+    fs.promises.unlink(filesUpload.path).catch(() => {});
+  }
+  fs.promises.unlink(dbUpload.path).catch(() => {});
+
+  res.json({ ok: true, imported: incoming, files: restoredFiles });
 }));
 
 // --- net sales ------------------------------------------------------------

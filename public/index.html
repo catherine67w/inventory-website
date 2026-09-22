@@ -287,6 +287,25 @@
       </div>
 
       <div class="card">
+        <h2>Bring data in from a backup</h2>
+        <p class="muted small">For moving this app to a new server. Takes a backup made by
+          <code>npm run backup</code> — the <code>.db</code> file, and optionally a zip of the
+          invoice photos beside it — and loads it in.</p>
+        <p class="muted small"><strong>Only works into an empty app.</strong> If there are already
+          invoices or sales here, it refuses, so it cannot write over anything.</p>
+        <div class="filters inline">
+          <label>Backup database
+            <input type="file" id="import-db" accept=".db">
+          </label>
+          <label>Photos zip <span class="muted small">(optional)</span>
+            <input type="file" id="import-files" accept=".zip">
+          </label>
+          <button class="btn" id="import-go">Import</button>
+        </div>
+        <div id="import-result"></div>
+      </div>
+
+      <div class="card">
         <h2>If you lose the phone</h2>
         <p class="muted small">
           Two-factor can always be switched off from the Mac running this app, even without a code.

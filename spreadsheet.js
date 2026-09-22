@@ -211,4 +211,19 @@ function readZipTextFiles(filePath) {
   return out;
 }
 
-module.exports = { readWorkbook, readZipTextFiles, serialToDate };
+// Same reader, but keeping the bytes — invoice photos are not text.
+function readZipBinaryFiles(filePath) {
+  const buf = fs.readFileSync(filePath);
+  const out = new Map();
+  for (const [name, entry] of readEntries(buf)) {
+    if (name.endsWith('/')) continue;
+    try {
+      out.set(name, readFile(buf, entry));
+    } catch {
+      // Skip what cannot be inflated rather than failing the whole archive.
+    }
+  }
+  return out;
+}
+
+module.exports = { readWorkbook, readZipTextFiles, readZipBinaryFiles, serialToDate };
