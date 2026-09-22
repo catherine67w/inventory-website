@@ -6,7 +6,7 @@
 // macOS ships `sips`, so this needs no dependency on the machine the app runs
 // on. On anything else it says so plainly instead of failing obscurely.
 
-const { execFileSync } = require('child_process');
+const { execFileSync, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -42,18 +42,25 @@ function convertWithSips(filePath, jpegPath) {
 }
 
 // Everywhere else: a pure-JavaScript decoder, so a Linux server needs nothing
-// installed. It cannot resize, so quality is the lever for keeping the file
-// under the API's per-image limit — dropping it only on the photos that need it
-// rather than softening every one.
-async function convertWithLibrary(filePath, jpegPath) {
-  const heicConvert = require('heic-convert');
-  const input = await fs.promises.readFile(filePath);
-
-  let output = Buffer.from(await heicConvert({ buffer: input, format: 'JPEG', quality: 0.85 }));
-  if (output.length > MAX_BYTES) {
-    output = Buffer.from(await heicConvert({ buffer: input, format: 'JPEG', quality: 0.55 }));
-  }
-  await fs.promises.writeFile(jpegPath, output);
+// installed — but it is libheif compiled to WebAssembly, and a WASM heap is
+// never returned to the operating system. Run in-process it leaves the server
+// permanently ~330 MB heavier, which on a small instance means the next upload
+// exceeds the memory limit and the host restarts it in the middle of saving.
+//
+// So each photo is converted in a child process that exits straight after,
+// handing the memory back. One photo at a time, bounded, whatever the batch.
+function convertWithLibrary(filePath, jpegPath) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [path.join(__dirname, 'scripts', 'heic-worker.js'), filePath, jpegPath, String(MAX_BYTES)],
+      { timeout: 120_000, maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) reject(new Error(String(stderr || err.message).trim()));
+        else resolve();
+      },
+    );
+  });
 }
 
 // Converts in place: writes a .jpg beside the original, removes the original,
