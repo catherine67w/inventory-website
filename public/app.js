@@ -2331,7 +2331,51 @@ $('#import-go').addEventListener('click', async () => {
   }
 });
 
+async function renderBackups() {
+  const box = $('#backup-list');
+  try {
+    const data = await api('/api/backups');
+    const age = (iso) => {
+      const hours = (Date.now() - new Date(iso)) / 3600000;
+      if (hours < 1) return 'just now';
+      if (hours < 24) return `${Math.round(hours)} hours ago`;
+      return `${Math.round(hours / 24)} days ago`;
+    };
+    box.innerHTML = data.backups.length ? `
+      <p class="muted small">Automatic every ${data.every_hours} hours, keeping the last ${data.keep}.</p>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Backup</th><th>Made</th><th class="num">Size</th><th></th></tr></thead>
+        <tbody>${data.backups.map((b) => `
+          <tr>
+            <td>${esc(b.name)}</td>
+            <td>${age(b.made_at)}</td>
+            <td class="num">${(b.bytes / 1024).toFixed(0)} KB</td>
+            <td class="num"><a class="btn small ghost" href="/api/backups/${encodeURIComponent(b.name)}">Download</a></td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>`
+      : '<p class="muted small">No backups yet — the first one is made shortly after the app starts.</p>';
+  } catch (err) {
+    box.innerHTML = `<p class="warn-text small">${esc(err.message)}</p>`;
+  }
+}
+
+$('#backup-now').addEventListener('click', async (e) => {
+  const btn = e.target;
+  btn.disabled = true;
+  try {
+    const made = await api('/api/backups', { method: 'POST' });
+    toast(`Backed up — ${made.counts.invoices} invoices, ${made.counts.sales_days} sales days.`);
+    renderBackups();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 loaders.security = async function loadSecurity() {
+  renderBackups();
   const status = await api('/api/2fa/status');
   state.twofa = status;
 

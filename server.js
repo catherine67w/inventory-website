@@ -11,6 +11,7 @@ const { parseFile, parseSalesFile, apiKeyProblem, PRICING, MODEL } = require('./
 const auth = require('./auth');
 const { normalizeUpload } = require('./images');
 const { readZipBinaryFiles } = require('./spreadsheet');
+const backups = require('./backup');
 const Database = require('better-sqlite3');
 const { CATEGORIES, GROUPS, NAMES, groupOf } = require('./categories');
 
@@ -617,6 +618,60 @@ app.post('/api/upload', upload.array('files', 20), wrap(async (req, res) => {
   }
   res.json({ results });
 }));
+
+// --- backups --------------------------------------------------------------
+
+// The live copy is the one that matters, so it backs itself up on a timer and
+// keeps the recent ones. These live on the same persistent disk as the
+// database: that protects against a bad import or a deletion, not against
+// losing the disk — which is what the download below is for.
+const BACKUP_DIR = path.join(process.env.DATA_DIR || __dirname, 'backups');
+const BACKUP_EVERY_HOURS = Number(process.env.BACKUP_EVERY_HOURS || 24);
+const BACKUP_KEEP = Number(process.env.BACKUP_KEEP || 14);
+
+function runScheduledBackup() {
+  try {
+    const made = backups.makeBackup(BACKUP_DIR);
+    const removed = backups.pruneBackups(BACKUP_DIR, BACKUP_KEEP);
+    console.log(`  backup: ${made.name} — ${made.counts.invoices} invoices, ` +
+      `${made.counts.sales_days} sales days${removed ? `, ${removed} old one(s) removed` : ''}`);
+  } catch (err) {
+    console.error('  backup failed:', err.message);
+  }
+}
+
+if (BACKUP_EVERY_HOURS > 0) {
+  // Shortly after boot, so a restart always leaves a recent copy behind, then
+  // on the interval. Unref'd so it never holds the process open by itself.
+  setTimeout(runScheduledBackup, 60_000).unref();
+  setInterval(runScheduledBackup, BACKUP_EVERY_HOURS * 3600 * 1000).unref();
+}
+
+app.get('/api/backups', (req, res) => {
+  res.json({
+    backups: backups.listBackups(BACKUP_DIR),
+    every_hours: BACKUP_EVERY_HOURS,
+    keep: BACKUP_KEEP,
+  });
+});
+
+app.post('/api/backups', (req, res) => {
+  const made = backups.makeBackup(BACKUP_DIR);
+  backups.pruneBackups(BACKUP_DIR, BACKUP_KEEP);
+  res.json({ ok: true, ...made, file: undefined });
+});
+
+// Downloading is what gets a copy off the server entirely, which is the only
+// thing that survives losing the disk.
+app.get('/api/backups/:name', (req, res) => {
+  const name = path.basename(String(req.params.name || ''));
+  if (!backups.NAME_PATTERN.test(name)) {
+    return res.status(400).json({ error: 'That is not a backup file name.' });
+  }
+  const file = path.join(BACKUP_DIR, name);
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'That backup no longer exists.' });
+  res.download(file, name);
+});
 
 // --- moving data onto a new server ----------------------------------------
 

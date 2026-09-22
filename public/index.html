@@ -287,6 +287,18 @@
       </div>
 
       <div class="card">
+        <h2>Backups</h2>
+        <p class="muted small">This app backs itself up automatically and keeps the recent ones.
+          Those copies sit on the same disk as the database, which protects against a mistake in
+          the app — <strong>not</strong> against losing the server. For that, download one
+          occasionally and keep it somewhere else.</p>
+        <div class="filters inline">
+          <button class="btn" id="backup-now">Back up now</button>
+        </div>
+        <div id="backup-list"></div>
+      </div>
+
+      <div class="card">
         <h2>Bring data in from a backup</h2>
         <p class="muted small">For moving this app to a new server. Takes a backup made by
           <code>npm run backup</code> — the <code>.db</code> file, and optionally a zip of the

@@ -434,6 +434,21 @@ back to a bundled JavaScript decoder everywhere else, so nothing has to be insta
 
 ## Backing it up
 
+**The live site backs itself up.** Every 24 hours it writes a verified copy of the database into
+`backups/` on its disk and keeps the last 14, deleting older ones so the disk cannot quietly
+fill. One is also made a minute after every restart, so a restart always leaves a recent copy
+behind. The **Security** tab lists them, makes one on demand, and downloads any of them.
+
+Those copies sit on the same disk as the database. That protects against a mistake inside the
+app — a bad import, something deleted — but **not** against losing the server. Downloading one
+now and then, and keeping it somewhere else, is what covers that. `BACKUP_EVERY_HOURS` and
+`BACKUP_KEEP` change the schedule if you want.
+
+The invoice photos are **not** in those backups, only the database. The photos are still on the
+server's disk; getting them off it as well would need the folder copied separately.
+
+### On the Mac
+
 ```bash
 npm run backup
 ```
