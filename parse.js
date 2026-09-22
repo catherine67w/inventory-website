@@ -101,6 +101,13 @@ function fileToBlock(filePath, ext) {
 // Checks the API key before we try to use it, so a bad key produces a sentence
 // the user can act on instead of a low-level encoding error. Returns null when
 // the key looks usable.
+// Where the key is configured differs by machine: a file on the Mac, the host's
+// own settings on a server. Naming the wrong one sends someone looking in a
+// place that does not exist.
+const keyLocation = () => (process.env.DATA_DIR
+  ? "the server's ANTHROPIC_API_KEY setting"
+  : 'the API key in .env');
+
 function apiKeyProblem() {
   const key = process.env.ANTHROPIC_API_KEY || '';
   if (!key) {
@@ -153,7 +160,7 @@ async function parseWithClaude(filePath, ext) {
   } catch (err) {
     // Turn SDK and network failures into something actionable.
     if (err.status === 401 || err.status === 403) {
-      throw new Error('Anthropic rejected the API key in .env. Check that it was copied in full, or create a new one.');
+      throw new Error(`Anthropic rejected ${keyLocation()}. Check it was copied in full — a valid key is 100+ characters — or create a new one.`);
     }
     if (err.status === 400 && /credit|balance/i.test(err.message || '')) {
       throw new Error('Your Anthropic account is out of credit. Add credit at console.anthropic.com, then try again.');
@@ -383,7 +390,7 @@ async function parseSalesWithClaude(filePath, ext) {
     });
   } catch (err) {
     if (err.status === 401 || err.status === 403) {
-      throw new Error('Anthropic rejected the API key in .env. Check that it was copied in full, or create a new one.');
+      throw new Error(`Anthropic rejected ${keyLocation()}. Check it was copied in full — a valid key is 100+ characters — or create a new one.`);
     }
     if (err.status === 400 && /credit|balance/i.test(err.message || '')) {
       throw new Error('Your Anthropic account is out of credit. Add credit at console.anthropic.com, then try again.');
