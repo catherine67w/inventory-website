@@ -69,9 +69,23 @@ async function heicToJpeg(filePath) {
   const jpegPath = filePath.replace(/\.[^.]+$/, '') + '.jpg';
 
   try {
-    if (sipsAvailable()) convertWithSips(filePath, jpegPath);
-    else await convertWithLibrary(filePath, jpegPath);
+    if (sipsAvailable()) {
+      convertWithSips(filePath, jpegPath);
+    } else if (process.env.HEIC_DECODE === '1') {
+      await convertWithLibrary(filePath, jpegPath);
+    } else {
+      // Measured: decoding one 2 MB HEIC peaks at 408 MB, and a small instance
+      // allows 512 MB in total. It fits with nothing to spare, so a larger
+      // photo or two uploads at once takes the whole app down mid-save. A
+      // refusal naming the one-time fix beats a crash that loses the batch.
+      throw new Error(
+        'iPhone HEIC photos cannot be converted on this server — it does not have the memory for it. ' +
+        'On the iPhone: Settings → Camera → Formats → Most Compatible, which makes it take JPEGs from ' +
+        'then on. Photos already taken can be uploaded from the phone\'s own browser, which converts ' +
+        'them on the way.');
+    }
   } catch (err) {
+    if (/Most Compatible/.test(err.message)) throw err;
     throw new Error('This HEIC photo could not be converted. Send it to yourself as a ' +
       'JPEG, or take the photo again with Most Compatible turned on. ' +
       `(${err.message})`);

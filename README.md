@@ -71,8 +71,15 @@ the app still works fully: **CSV import** and **manual entry** need no key.
 **iPhone HEIC photos work.** An iPhone shoots HEIC by default, and nothing else reads it — not
 the extraction, not Chrome, not most backup viewers. So an uploaded HEIC is converted to JPEG
 the moment it arrives, and the JPEG is what gets stored, read, displayed and backed up. The
-original stays on your phone. On a Mac it converts with `sips`, which is built in; anywhere else
-it falls back to a bundled JavaScript decoder, so a server needs nothing installed either way.
+original stays on your phone. On a Mac it converts with `sips`, which is built in.
+
+**On the server it does not.** The JavaScript decoder that works without `sips` peaks at 408 MB
+for a single 2 MB photo — measured — against the 512 MB the instance has in total. It fits with
+nothing to spare, so a larger photo or two people uploading at once takes the whole app down in
+the middle of saving. The server therefore refuses HEIC and says what to do instead: turn on
+**Settings → Camera → Formats → Most Compatible** on the iPhone, or upload from the phone's own
+browser, which converts on the way. Setting `HEIC_DECODE=1` turns the decoder back on, for a
+host with memory to spare.
 
 Get a key at https://console.anthropic.com. Reading an invoice costs a few cents; the exact
 figure for every invoice is shown on the Dashboard.
