@@ -734,13 +734,11 @@ loaders.vendors = async function loadVendors() {
   const rows = await refreshVendors();
   $('#vendors-table').innerHTML = rows.length ? `
     <div class="table-scroll"><table>
-      <thead><tr><th>Vendor</th><th>Contact</th><th>Terms</th><th class="num">Invoices</th>
+      <thead><tr><th>Vendor</th><th class="num">Invoices</th>
       <th class="num">Total spend</th><th>Last invoice</th><th></th></tr></thead>
       <tbody>${rows.map((v) => `
         <tr class="clickable" data-vendor-items="${v.id}">
           <td>${esc(v.name)}</td>
-          <td>${esc(v.contact || '—')}</td>
-          <td>${esc(v.terms || '—')}</td>
           <td class="num">${v.invoice_count}</td>
           <td class="num">${money(v.total_spend)}</td>
           <td>${esc(v.last_invoice || '—')}</td>
@@ -773,9 +771,12 @@ $('#vendors-table').addEventListener('click', async (e) => {
   const vendor = state.vendors.find((v) => String(v.id) === btn.dataset.vendorEdit);
   const name = prompt('Vendor name', vendor.name);
   if (name === null) return;
-  const contact = prompt('Contact (optional)', vendor.contact || '') ?? '';
-  const terms = prompt('Payment terms (optional)', vendor.terms || '') ?? '';
-  await api(`/api/vendors/${vendor.id}`, { method: 'PUT', body: JSON.stringify({ name, contact, terms }) });
+  // Contact and terms are no longer shown or edited here. They are still sent
+  // back unchanged so renaming a vendor does not quietly blank them.
+  await api(`/api/vendors/${vendor.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name, contact: vendor.contact || '', terms: vendor.terms || '' }),
+  });
   toast('Vendor updated.');
   loaders.vendors();
 });
