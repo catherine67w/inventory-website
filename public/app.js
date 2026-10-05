@@ -140,8 +140,13 @@ loaders.dashboard = async function loadDashboard() {
   const data = await api('/api/dashboard');
   const s = data.stats;
 
-  $('#dashboard-period').textContent =
-    `Month to date · ${data.period.from} to ${data.period.to}`;
+  // Say plainly when this is not the current month, so figures from July are
+  // never mistaken for figures from today.
+  const monthName = new Date(data.period.from + 'T00:00:00Z')
+    .toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  $('#dashboard-period').textContent = data.period.showing_latest_month
+    ? `${monthName} · the most recent month with data`
+    : `Month to date · ${data.period.from} to ${data.period.to}`;
 
   const cards = [
     { label: 'Purchases', value: money0(s.purchases), sub: `${s.invoice_count} invoice${s.invoice_count === 1 ? '' : 's'}` },

@@ -1562,8 +1562,38 @@ app.get('/api/analytics', (req, res) => {
 
 app.get('/api/dashboard', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
-  const monthStart = today.slice(0, 8) + '01';
-  const stats = periodStats(monthStart, today, 'all');
+  let from = today.slice(0, 8) + '01';
+  let to = today;
+  let fellBack = false;
+
+  // Month to date, unless this month holds nothing — in which case the most
+  // recent month that does. A dashboard of zeros because it happens to be the
+  // 3rd of a quiet month reads as a broken app, not an empty one.
+  const thisMonth = db.prepare(`
+    SELECT (SELECT COUNT(*) FROM invoices WHERE invoice_date BETWEEN @from AND @to) AS invoices,
+           (SELECT COUNT(*) FROM sales WHERE sale_date BETWEEN @from AND @to) AS sales
+  `).get({ from, to });
+
+  if (!thisMonth.invoices && !thisMonth.sales) {
+    const latest = db.prepare(`
+      SELECT MAX(month) AS month FROM (
+        SELECT substr(invoice_date, 1, 7) AS month FROM invoices
+        UNION ALL
+        SELECT substr(sale_date, 1, 7) AS month FROM sales
+      )
+    `).get().month;
+
+    if (latest) {
+      from = `${latest}-01`;
+      // Last day of that month: day 0 of the next one.
+      const [y, m] = latest.split('-').map(Number);
+      to = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+      fellBack = true;
+    }
+  }
+
+  const monthStart = from;
+  const stats = periodStats(from, to, 'all');
   const pending = db.prepare("SELECT COUNT(*) AS n FROM invoices WHERE status = 'review'").get().n;
   const recent = db.prepare(`
     SELECT i.id, i.invoice_number, i.invoice_date, i.total, i.status, v.name AS vendor_name
@@ -1571,11 +1601,11 @@ app.get('/api/dashboard', (req, res) => {
     ORDER BY i.created_at DESC LIMIT 8
   `).all();
   res.json({
-    period: { from: monthStart, to: today },
+    period: { from, to, showing_latest_month: fellBack },
     stats,
     pending_review: pending,
     recent,
-    usage: usageTotals(monthStart, today),
+    usage: usageTotals(from, to),
   });
 });
 
