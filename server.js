@@ -152,6 +152,10 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 app.use('/files', express.static(UPLOAD_DIR));
 
+// Reading an invoice costs real money, so a batch that is over the limit is
+// turned away before a single file is read rather than part-way through.
+const MAX_UPLOAD_FILES = 20;
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: UPLOAD_DIR,
@@ -160,7 +164,7 @@ const upload = multer({
       cb(null, stamp + path.extname(file.originalname).toLowerCase());
     },
   }),
-  limits: { fileSize: 30 * 1024 * 1024 },
+  limits: { fileSize: 30 * 1024 * 1024, files: MAX_UPLOAD_FILES },
 });
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -586,7 +590,7 @@ app.delete('/api/invoices/:id', (req, res) => {
 
 // --- upload + extraction --------------------------------------------------
 
-app.post('/api/upload', upload.array('files', 20), wrap(async (req, res) => {
+app.post('/api/upload', upload.array('files', MAX_UPLOAD_FILES), wrap(async (req, res) => {
   const files = req.files || [];
   if (!files.length) return res.status(400).json({ error: 'No files were uploaded.' });
 
@@ -805,7 +809,7 @@ function missingDates(entries, period) {
 
 // Read one or more sales reports. Nothing is stored yet — the response is a
 // draft the user checks before saving, same as invoices.
-app.post('/api/sales/upload', upload.array('files', 20), wrap(async (req, res) => {
+app.post('/api/sales/upload', upload.array('files', MAX_UPLOAD_FILES), wrap(async (req, res) => {
   const files = req.files || [];
   if (!files.length) return res.status(400).json({ error: 'No files were uploaded.' });
 
@@ -1613,6 +1617,22 @@ app.get('/api/dashboard', (req, res) => {
 
 app.use((err, req, res, next) => {
   console.error(err);
+
+  // An upload multer turned away has usually already written some of its files
+  // to disk before stopping. Nothing will claim them, so they go now.
+  if (err instanceof multer.MulterError) {
+    for (const file of [].concat(...Object.values(req.files || {}))) {
+      try { fs.unlinkSync(file.path); } catch { /* already gone */ }
+    }
+  }
+
+  if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+    return res.status(413).json({
+      error: `More than ${MAX_UPLOAD_FILES} files at once. Nothing was read, so no reading `
+        + `credit was spent — send them in batches of ${MAX_UPLOAD_FILES} or fewer.`,
+    });
+  }
+
   const status = err.status || (err.code === 'LIMIT_FILE_SIZE' ? 413 : 500);
   res.status(status).json({ error: err.message || 'Something went wrong.' });
 });

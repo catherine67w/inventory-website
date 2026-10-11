@@ -242,6 +242,19 @@ function renderCategoryBars(rows) {
 
 /* ---------- upload ---------- */
 
+// Each file costs money to read, so an oversized batch is stopped here: it
+// never reaches the server, and nothing is read. Silently sending only the
+// first twenty would be worse — the rest would look uploaded when they weren't.
+const MAX_UPLOAD_FILES = 20;
+
+function tooManyFiles(fileList, what) {
+  if (fileList.length <= MAX_UPLOAD_FILES) return false;
+  toast(`${fileList.length} ${what}s at once is too many — ${MAX_UPLOAD_FILES} is the limit. `
+    + `Nothing was uploaded and no reading credit was spent. `
+    + `Try again with ${MAX_UPLOAD_FILES} or fewer.`, true);
+  return true;
+}
+
 const dropzone = $('#dropzone');
 const fileInput = $('#file-input');
 
@@ -258,8 +271,10 @@ dropzone.addEventListener('drop', (e) => {
 });
 
 async function uploadFiles(fileList) {
+  if (tooManyFiles(fileList, 'invoice')) { fileInput.value = ''; return; }
+
   const form = new FormData();
-  Array.from(fileList).slice(0, 20).forEach((f) => form.append('files', f));
+  Array.from(fileList).forEach((f) => form.append('files', f));
 
   $('#upload-progress').classList.remove('hidden');
   $('#progress-note').textContent =
@@ -1302,8 +1317,10 @@ salesDrop.addEventListener('drop', (e) => {
 });
 
 async function uploadSalesReports(fileList) {
+  if (tooManyFiles(fileList, 'report')) { salesInput.value = ''; return; }
+
   const form = new FormData();
-  Array.from(fileList).slice(0, 20).forEach((f) => form.append('files', f));
+  Array.from(fileList).forEach((f) => form.append('files', f));
 
   $('#sales-progress').classList.remove('hidden');
   $('#sales-progress-note').textContent =
