@@ -317,7 +317,11 @@ app.get('/api/invoices/:id', (req, res) => {
   `).get(req.params.id);
   if (!invoice) return res.status(404).json({ error: 'Invoice not found.' });
   invoice.items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY line_no, id').all(invoice.id);
-  invoice.pages = db.prepare('SELECT id, file, original_name FROM invoice_pages WHERE invoice_id = ? ORDER BY id').all(invoice.id);
+  invoice.pages = db.prepare(`
+    SELECT p.id, p.file, p.original_name,
+           EXISTS(SELECT 1 FROM invoice_merges m WHERE m.page_id = p.id) AS can_undo
+    FROM invoice_pages p WHERE p.invoice_id = ? ORDER BY p.id
+  `).all(invoice.id);
   res.json(invoice);
 });
 
@@ -523,6 +527,19 @@ app.post('/api/invoices/:id/merge', (req, res) => {
 
   const nextLine = db.prepare('SELECT COALESCE(MAX(line_no), 0) AS n FROM invoice_items WHERE invoice_id = ?').get(target.id).n;
 
+  // Noted before anything moves: once the merge runs, the source row is gone
+  // and there is no other way to work out which items and pages came from it.
+  const movedItemIds = db.prepare('SELECT id FROM invoice_items WHERE invoice_id = ?')
+    .all(source.id).map((r) => r.id);
+  const movedPageIds = db.prepare('SELECT id FROM invoice_pages WHERE invoice_id = ?')
+    .all(source.id).map((r) => r.id);
+  const targetBefore = {
+    subtotal: target.subtotal, tax: target.tax, freight: target.freight,
+    discount: target.discount, total: target.total, invoice_number: target.invoice_number,
+    extraction_cost: target.extraction_cost, input_tokens: target.input_tokens,
+    output_tokens: target.output_tokens,
+  };
+
   db.transaction(() => {
     // Items keep their order, continuing after the target's existing lines.
     db.prepare(`
@@ -533,12 +550,28 @@ app.post('/api/invoices/:id/merge', (req, res) => {
 
     // The source's photograph becomes another page of the target rather than
     // being deleted with the row — it is the evidence for the items just moved.
+    let pageId = null;
     if (source.source_file) {
-      db.prepare('INSERT INTO invoice_pages (invoice_id, file, original_name) VALUES (?, ?, ?)')
-        .run(target.id, source.source_file, `page from invoice ${source.invoice_number || source.id}`);
+      pageId = db.prepare('INSERT INTO invoice_pages (invoice_id, file, original_name) VALUES (?, ?, ?)')
+        .run(target.id, source.source_file, `page from invoice ${source.invoice_number || source.id}`)
+        .lastInsertRowid;
     }
     // Any pages the source had already collected come across too.
     db.prepare('UPDATE invoice_pages SET invoice_id = ? WHERE invoice_id = ?').run(target.id, source.id);
+
+    db.prepare(`
+      INSERT INTO invoice_merges
+        (target_id, page_id, source_json, item_ids, moved_page_ids, line_offset, target_before)
+      VALUES (@target_id, @page_id, @source_json, @item_ids, @moved_page_ids, @line_offset, @target_before)
+    `).run({
+      target_id: target.id,
+      page_id: pageId,
+      source_json: JSON.stringify(source),
+      item_ids: JSON.stringify(movedItemIds),
+      moved_page_ids: JSON.stringify(movedPageIds),
+      line_offset: nextLine,
+      target_before: JSON.stringify(targetBefore),
+    });
 
     db.prepare(`
       UPDATE invoices SET
@@ -571,6 +604,123 @@ app.post('/api/invoices/:id/merge', (req, res) => {
   `).get(target.id);
 
   res.json({ ok: true, invoice: { ...merged, items_sum: money(merged.items_sum) } });
+});
+
+// Takes a page back out of an invoice — the reverse of the merge above.
+//
+// Where the merge was recorded, this is a true undo: the folded-in invoice
+// comes back with its own line items, its own total and its own photograph,
+// and the invoice it was folded into returns to exactly what it was.
+//
+// A page merged in before merges were recorded cannot be put back that
+// precisely, because what the deleted invoice said is gone. The page is
+// separated into a new invoice awaiting review instead, carrying its
+// photograph but no line items — those stay where they are rather than being
+// guessed at, and can be moved by hand.
+app.post('/api/invoices/:id/unmerge', (req, res) => {
+  const target = db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'That invoice no longer exists.' });
+
+  const page = db.prepare('SELECT * FROM invoice_pages WHERE id = ? AND invoice_id = ?')
+    .get(req.body.page_id, target.id);
+  if (!page) return res.status(404).json({ error: 'That page is not part of this invoice.' });
+
+  const log = db.prepare('SELECT * FROM invoice_merges WHERE page_id = ? AND target_id = ?')
+    .get(page.id, target.id);
+
+  // Undoing out of order would move the wrong items: a later merge piled more
+  // lines on top, and the offsets recorded here no longer describe the invoice.
+  if (log) {
+    const newer = db.prepare(
+      'SELECT COUNT(*) AS n FROM invoice_merges WHERE target_id = ? AND id > ?',
+    ).get(target.id, log.id).n;
+    if (newer) {
+      return res.status(409).json({
+        error: 'Another page was added to this invoice after this one. Take the most recently '
+          + 'added page back out first.',
+      });
+    }
+  }
+
+  let restored;
+  db.transaction(() => {
+    if (log) {
+      const source = JSON.parse(log.source_json);
+      const itemIds = JSON.parse(log.item_ids);
+      const pageIds = JSON.parse(log.moved_page_ids);
+
+      // The original id is free — AUTOINCREMENT never reissues it — so the
+      // invoice comes back as the same invoice, not a lookalike.
+      const taken = db.prepare('SELECT 1 FROM invoices WHERE id = ?').get(source.id);
+      const info = db.prepare(`
+        INSERT INTO invoices
+          (id, vendor_id, invoice_number, invoice_date, due_date, subtotal, tax, freight,
+           discount, total, status, source_file, notes, created_at, updated_at,
+           input_tokens, output_tokens, extraction_cost)
+        VALUES
+          (@id, @vendor_id, @invoice_number, @invoice_date, @due_date, @subtotal, @tax, @freight,
+           @discount, @total, @status, @source_file, @notes, @created_at, datetime('now'),
+           @input_tokens, @output_tokens, @extraction_cost)
+      `).run({ ...source, id: taken ? null : source.id });
+      restored = Number(info.lastInsertRowid);
+
+      // Only items still sitting on the target move back. One deleted or moved
+      // on by hand since the merge stays where it is now.
+      if (itemIds.length) {
+        db.prepare(`
+          UPDATE invoice_items SET invoice_id = @source, line_no = MAX(line_no - @offset, 1)
+          WHERE invoice_id = @target AND id IN (${itemIds.map(() => '?').join(',')})
+        `).run({ source: restored, target: target.id, offset: log.line_offset }, ...itemIds);
+      }
+      if (pageIds.length) {
+        db.prepare(`
+          UPDATE invoice_pages SET invoice_id = ?
+          WHERE invoice_id = ? AND id IN (${pageIds.map(() => '?').join(',')})
+        `).run(restored, target.id, ...pageIds);
+      }
+
+      // The photograph goes back to being the restored invoice's own, so it is
+      // no longer a page of the target.
+      db.prepare('DELETE FROM invoice_pages WHERE id = ?').run(page.id);
+
+      const before = JSON.parse(log.target_before);
+      db.prepare(`
+        UPDATE invoices SET
+          subtotal = @subtotal, tax = @tax, freight = @freight, discount = @discount,
+          total = @total, invoice_number = @invoice_number, extraction_cost = @extraction_cost,
+          input_tokens = @input_tokens, output_tokens = @output_tokens,
+          updated_at = datetime('now')
+        WHERE id = @id
+      `).run({ ...before, id: target.id });
+
+      db.prepare('DELETE FROM invoice_merges WHERE id = ?').run(log.id);
+    } else {
+      // No record of the merge: the page becomes an invoice of its own, with
+      // nothing filled in that cannot be known. It lands in review so it is
+      // read or typed up before it counts towards anything.
+      const info = db.prepare(`
+        INSERT INTO invoices
+          (vendor_id, invoice_number, invoice_date, status, source_file, notes)
+        VALUES (@vendor_id, '', @invoice_date, 'review', @file, @notes)
+      `).run({
+        vendor_id: target.vendor_id,
+        invoice_date: target.invoice_date,
+        file: page.file,
+        notes: `Separated from invoice ${target.invoice_number || target.id}. `
+          + 'Line items were left on that invoice — check which belong here.',
+      });
+      restored = Number(info.lastInsertRowid);
+      db.prepare('DELETE FROM invoice_pages WHERE id = ?').run(page.id);
+    }
+  })();
+
+  const invoice = db.prepare(`
+    SELECT i.*, v.name AS vendor_name,
+           (SELECT COUNT(*) FROM invoice_items it WHERE it.invoice_id = i.id) AS item_count
+    FROM invoices i JOIN vendors v ON v.id = i.vendor_id WHERE i.id = ?
+  `).get(restored);
+
+  res.json({ ok: true, undone: Boolean(log), invoice });
 });
 
 app.delete('/api/invoices/:id', (req, res) => {

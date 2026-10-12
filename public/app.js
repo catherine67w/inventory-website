@@ -1832,6 +1832,8 @@ function openEditor(data) {
       cost: base.extraction_cost || 0,
     },
     items: (base.items || []).map((i) => ({ ...i })),
+    // Kept so taking a page out can say which of the two things it will do.
+    pages: (base.pages || []).map((pg) => ({ ...pg })),
   };
 
   const u = state.editor.usage;
@@ -1864,7 +1866,13 @@ function openEditor(data) {
   // Pages merged in later each get their own link, so every line item can be
   // checked against the photograph it came from.
   $('#editor-pages').innerHTML = (base.pages || []).map((p, i) =>
-    `<a class="link" target="_blank" rel="noopener" href="/files/${esc(p.file)}">Page ${i + 2}</a>`).join('');
+    `<span class="editor-page">
+       <a class="link" target="_blank" rel="noopener" href="/files/${esc(p.file)}">Page ${i + 2}</a>
+       <button type="button" class="link subtle" data-unmerge="${p.id}"
+         title="${p.can_undo
+           ? 'Put this page back as the separate invoice it was before the merge'
+           : 'Separate this page into its own invoice awaiting review'}">take out</button>
+     </span>`).join('');
   $('#ed-delete').classList.toggle('hidden', !base.id);
 
   renderEditorLines();
@@ -1908,6 +1916,42 @@ $('#ed-items').addEventListener('input', (e) => {
 
 ['#ed-subtotal', '#ed-tax', '#ed-freight', '#ed-discount', '#ed-total'].forEach((sel) =>
   $(sel).addEventListener('input', updateBalanceNote));
+
+// Taking a page back out. Where the merge was recorded the invoice comes back
+// whole; where it was not, only the page can be separated, so the two cases are
+// described differently rather than promising the same thing.
+$('#editor-pages').addEventListener('click', async (e) => {
+  const button = e.target.closest('[data-unmerge]');
+  if (!button) return;
+
+  const invoiceId = state.editor && state.editor.id;
+  if (!invoiceId) return;
+
+  const page = (state.editor.pages || []).find((p) => String(p.id) === button.dataset.unmerge);
+  const warning = page && page.can_undo
+    ? 'This page goes back to being the invoice it was before the merge, with its own '
+      + 'line items and total. This invoice returns to what it was.'
+    : 'This merge was made before the app kept a record of merges, so the original '
+      + 'invoice cannot be rebuilt.\n\nThe page becomes a new invoice awaiting review, '
+      + 'with its photo but no line items — those stay on this invoice, for you to move.';
+
+  if (!confirm(`Take this page out of the invoice?\n\n${warning}`)) return;
+
+  try {
+    const result = await api(`/api/invoices/${invoiceId}/unmerge`, {
+      method: 'POST',
+      body: JSON.stringify({ page_id: Number(button.dataset.unmerge) }),
+    });
+    toast(result.undone
+      ? `Invoice ${result.invoice.invoice_number || result.invoice.id} is separate again, `
+        + `with ${result.invoice.item_count} line item${result.invoice.item_count === 1 ? '' : 's'}.`
+      : 'The page is now its own invoice, awaiting review.');
+    closeEditor();
+    loaders.invoices();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
 
 function closeEditor() {
   $('#editor').classList.add('hidden');

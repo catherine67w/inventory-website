@@ -136,6 +136,29 @@ CREATE TABLE IF NOT EXISTS invoice_pages (
 CREATE INDEX IF NOT EXISTS idx_pages_invoice ON invoice_pages(invoice_id);
 `);
 
+// A merge deletes the invoice that was folded in, so undoing one needs more
+// than the pages table holds: what the deleted invoice said, which line items
+// moved, and what the target's totals were before. That is recorded here at
+// merge time and thrown away once the merge is undone.
+//
+// A merge made before this table existed has no row, and cannot be undone in
+// full — its page can still be separated back out on its own.
+db.exec(`
+CREATE TABLE IF NOT EXISTS invoice_merges (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  target_id      INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  page_id        INTEGER,
+  source_json    TEXT NOT NULL,
+  item_ids       TEXT NOT NULL DEFAULT '[]',
+  moved_page_ids TEXT NOT NULL DEFAULT '[]',
+  line_offset    INTEGER NOT NULL DEFAULT 0,
+  target_before  TEXT NOT NULL,
+  merged_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_merges_target ON invoice_merges(target_id);
+CREATE INDEX IF NOT EXISTS idx_merges_page   ON invoice_merges(page_id);
+`);
+
 // Sales days read from an uploaded report carry their share of what the
 // reading cost, so the spend panel reflects everything, not just invoices.
 // period_start is the first day a row covers. It equals sale_date for an
