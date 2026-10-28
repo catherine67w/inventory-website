@@ -1951,37 +1951,29 @@ function readEditorLines({ all = false } = {}) {
 const lineSum = () => round2(readEditorLines({ all: true })
   .reduce((s, i) => s + i.extended_price, 0));
 
-// Money follows the lines when it was already in step with them. If the
-// subtotal matched the lines before a line was added, removed or repriced, it
-// should still match afterwards rather than quietly keeping the old figure.
+// Once a line is touched, the lines are the invoice: the subtotal is their
+// sum and the total follows from it. Whatever the reading took off the paper
+// is set aside at that point, because the person looking at the photograph is
+// correcting it.
 //
-// When the two disagree the subtotal is left alone: that is usually a line the
-// reading missed, and the figure printed on the invoice is the one that counts.
-// The note offers to take the lines' figure instead, as a deliberate click.
+// The figures are left alone until an edit happens, so merely opening an
+// invoice never rewrites what is stored. Until then the note below still
+// reports any gap between the two, which is how a missed line shows up.
 function syncMoneyToLines() {
-  const previous = state.editor ? state.editor.lineSum : null;
   const current = lineSum();
   if (state.editor) state.editor.lineSum = current;
-  if (previous === null || Math.abs(current - previous) <= 0.02) return;
-
-  const subtotal = Number($('#ed-subtotal').value) || 0;
-  if (Math.abs(subtotal - previous) > 0.02) return;   // it was already out of step
-
   applyLineSum(current);
 }
 
-// Sets the subtotal from the lines, and carries the total with it when the
-// total was the sum of its parts. A hand-typed total that never agreed is left
-// as it is — the note will go on saying so.
+// Sets the subtotal from the lines, and the total from the subtotal plus the
+// charges beside it.
 function applyLineSum(sum) {
   const tax = Number($('#ed-tax').value) || 0;
   const freight = Number($('#ed-freight').value) || 0;
   const discount = Number($('#ed-discount').value) || 0;
-  const before = round2((Number($('#ed-subtotal').value) || 0) + tax + freight - discount);
-  const totalWasDerived = Math.abs((Number($('#ed-total').value) || 0) - before) <= 0.02;
 
   $('#ed-subtotal').value = sum.toFixed(2);
-  if (totalWasDerived) $('#ed-total').value = round2(sum + tax + freight - discount).toFixed(2);
+  $('#ed-total').value = round2(sum + tax + freight - discount).toFixed(2);
   updateBalanceNote();
 }
 
@@ -2118,6 +2110,18 @@ $('#ed-balance').addEventListener('click', (e) => {
 
 ['#ed-subtotal', '#ed-tax', '#ed-freight', '#ed-discount', '#ed-total'].forEach((sel) =>
   $(sel).addEventListener('input', updateBalanceNote));
+
+// Changing a charge beside the subtotal moves the total with it, the same way
+// changing a line does.
+['#ed-tax', '#ed-freight', '#ed-discount'].forEach((sel) =>
+  $(sel).addEventListener('input', () => {
+    const subtotal = Number($('#ed-subtotal').value) || 0;
+    $('#ed-total').value = round2(subtotal
+      + (Number($('#ed-tax').value) || 0)
+      + (Number($('#ed-freight').value) || 0)
+      - (Number($('#ed-discount').value) || 0)).toFixed(2);
+    updateBalanceNote();
+  }));
 
 // Taking a page back out. Where the merge was recorded the invoice comes back
 // whole; where it was not, only the page can be separated, so the two cases are
