@@ -1144,6 +1144,83 @@ app.get('/api/items', (req, res) => {
   `).all(params));
 });
 
+// --- item categories ------------------------------------------------------
+
+// Which part of the menu each purchased product is bought for. The categories
+// are the menu's own sections, so a mapping made here is the same vocabulary
+// the Menu and Profit analysis tabs already speak.
+app.get('/api/item-categories', (req, res) => {
+  const sections = db.prepare(`
+    SELECT s.id, s.name, s.name_zh,
+           (SELECT COUNT(*) FROM item_sections m WHERE m.section_id = s.id) AS mapped_count,
+           (SELECT COUNT(*) FROM menu_items mi WHERE mi.section_id = s.id)  AS dish_count
+    FROM menu_sections s ORDER BY s.sort_order, s.id
+  `).all();
+
+  const params = {};
+  const where = ["i.status IN ('approved', 'review')"];
+  if (req.query.q) {
+    where.push('(it.description LIKE @q OR it.category LIKE @q OR v.name LIKE @q)');
+    params.q = `%${req.query.q}%`;
+  }
+
+  // Grouped by description alone: a mapping is about the product, not about
+  // which vendor happened to sell it that week.
+  let items = db.prepare(`
+    SELECT it.description,
+           COUNT(*)                        AS purchase_count,
+           SUM(it.extended_price)          AS total_spend,
+           COUNT(DISTINCT i.vendor_id)     AS vendor_count,
+           MAX(i.invoice_date)             AS latest_date,
+           (SELECT m.section_id FROM item_sections m WHERE m.description = it.description) AS section_id
+    FROM invoice_items it
+    JOIN invoices i ON i.id = it.invoice_id
+    JOIN vendors  v ON v.id = i.vendor_id
+    WHERE ${where.join(' AND ')}
+    GROUP BY it.description COLLATE NOCASE
+    ORDER BY SUM(it.extended_price) DESC, it.description COLLATE NOCASE
+    LIMIT 500
+  `).all(params);
+
+  if (req.query.unmapped === '1') items = items.filter((r) => !r.section_id);
+
+  const mapped = db.prepare('SELECT COUNT(*) AS n FROM item_sections').get().n;
+  res.json({
+    sections,
+    items: items.map((r) => ({ ...r, total_spend: money(r.total_spend) })),
+    mapped_total: mapped,
+  });
+});
+
+// Maps one or more products to a category, or clears them with a null section.
+app.post('/api/item-categories', (req, res) => {
+  const descriptions = (Array.isArray(req.body.descriptions) ? req.body.descriptions : [])
+    .map((d) => String(d || '').trim()).filter(Boolean);
+  if (!descriptions.length) return res.status(400).json({ error: 'Choose at least one product.' });
+
+  const clearing = req.body.section_id === null || req.body.section_id === '';
+  const section = clearing ? null
+    : db.prepare('SELECT * FROM menu_sections WHERE id = ?').get(req.body.section_id);
+  if (!clearing && !section) return res.status(404).json({ error: 'That category no longer exists.' });
+
+  db.transaction(() => {
+    for (const description of descriptions) {
+      if (clearing) {
+        db.prepare('DELETE FROM item_sections WHERE description = ?').run(description);
+      } else {
+        db.prepare(`
+          INSERT INTO item_sections (description, section_id, updated_at)
+          VALUES (@description, @section_id, datetime('now'))
+          ON CONFLICT(description) DO UPDATE
+            SET section_id = @section_id, updated_at = datetime('now')
+        `).run({ description, section_id: section.id });
+      }
+    }
+  })();
+
+  res.json({ ok: true, updated: descriptions.length, section: section ? section.name : null });
+});
+
 app.get('/api/items/history', (req, res) => {
   const description = String(req.query.description || '');
   if (!description) return res.status(400).json({ error: 'A description is required.' });

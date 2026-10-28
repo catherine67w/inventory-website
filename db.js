@@ -159,6 +159,22 @@ CREATE INDEX IF NOT EXISTS idx_merges_target ON invoice_merges(target_id);
 CREATE INDEX IF NOT EXISTS idx_merges_page   ON invoice_merges(page_id);
 `);
 
+// Which menu category an invoice item belongs to. Keyed by the description as
+// it appears on invoices, case-insensitively, so one mapping covers every time
+// that product is bought — past invoices and future ones alike.
+//
+// This is deliberately separate from invoice_items.category: that says what
+// kind of thing was bought (Produce, Meat & Seafood), while this says which
+// part of the menu it is bought for (Soup Base, Bubble Tea).
+db.exec(`
+CREATE TABLE IF NOT EXISTS item_sections (
+  description TEXT PRIMARY KEY COLLATE NOCASE,
+  section_id  INTEGER NOT NULL REFERENCES menu_sections(id) ON DELETE CASCADE,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_item_sections_section ON item_sections(section_id);
+`);
+
 // Sales days read from an uploaded report carry their share of what the
 // reading cost, so the spend panel reflects everything, not just invoices.
 // period_start is the first day a row covers. It equals sale_date for an

@@ -750,6 +750,146 @@ async function refreshVendors() {
   return state.vendors;
 }
 
+/* ---------- item categories ---------- */
+
+// Which part of the menu each purchased product is bought for. The categories
+// are the menu's own sections, so mapping here feeds the same vocabulary the
+// Menu and Profit analysis tabs use rather than inventing a second one.
+
+state.itemCats = { q: '', unmapped: false, ticket: 0, sections: [] };
+
+loaders.itemcats = async function loadItemCategories() {
+  const params = new URLSearchParams();
+  if (state.itemCats.q) params.set('q', state.itemCats.q);
+  if (state.itemCats.unmapped) params.set('unmapped', '1');
+
+  // Same out-of-order guard as the item search: typed searches can come back
+  // in the wrong order, and only the newest reply may paint.
+  const ticket = ++state.itemCats.ticket;
+  const data = await api('/api/item-categories?' + params);
+  if (ticket !== state.itemCats.ticket) return;
+
+  state.itemCats.sections = data.sections;
+  $('#itemcat-count').textContent =
+    `${data.mapped_total} product${data.mapped_total === 1 ? '' : 's'} mapped`;
+
+  $('#itemcat-sections').innerHTML = data.sections.length ? `
+    <table class="categories">
+      <thead><tr><th>Category</th><th class="num">Products</th><th class="num">Menu dishes</th><th></th></tr></thead>
+      <tbody>${data.sections.map((sec) => `
+        <tr>
+          <td>${esc(sec.name)}${sec.name_zh ? ` <span class="muted small">${esc(sec.name_zh)}</span>` : ''}</td>
+          <td class="num">${sec.mapped_count || '—'}</td>
+          <td class="num">${sec.dish_count || '—'}</td>
+          <td class="num"><button class="icon-btn" data-del-section="${sec.id}" title="Delete this category">✕</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : '<p class="muted small">No categories yet. Add the first one above.</p>';
+
+  const options = (selected) => ['<option value="">— none —</option>']
+    .concat(data.sections.map((sec) =>
+      `<option value="${sec.id}"${sec.id === selected ? ' selected' : ''}>${esc(sec.name)}</option>`))
+    .join('');
+
+  $('#itemcat-items').innerHTML = data.items.length ? `
+    <table>
+      <thead>
+        <tr><th>Product</th><th class="num">Bought</th><th class="num">Spend</th><th>Category</th></tr>
+      </thead>
+      <tbody>${data.items.map((item) => `
+        <tr>
+          <td>${esc(item.description)}
+            ${item.vendor_count > 1
+              ? `<span class="muted small"> · ${item.vendor_count} vendors</span>` : ''}</td>
+          <td class="num">${item.purchase_count}×</td>
+          <td class="num">${money(item.total_spend)}</td>
+          <td><select data-map-item="${esc(item.description)}">${options(item.section_id)}</select></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : `<p class="muted small">${state.itemCats.unmapped
+      ? 'Every product bought so far has a category.'
+      : 'No products match that search.'}</p>`;
+};
+
+// A category is picked per product and saved straight away: there is no draft
+// state to lose, and the next product can be set while the last one saves.
+$('#itemcat-items').addEventListener('change', async (e) => {
+  const select = e.target.closest('[data-map-item]');
+  if (!select) return;
+
+  const description = select.dataset.mapItem;
+  const sectionId = select.value === '' ? null : Number(select.value);
+  try {
+    const result = await api('/api/item-categories', {
+      method: 'POST',
+      body: JSON.stringify({ descriptions: [description], section_id: sectionId }),
+    });
+    toast(result.section
+      ? `“${description}” is now ${result.section}.`
+      : `“${description}” has no category.`);
+    loaders.itemcats();
+  } catch (err) {
+    toast(err.message, true);
+    loaders.itemcats();
+  }
+});
+
+$('#itemcat-add-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = $('#itemcat-new').value.trim();
+  if (!name) return;
+  try {
+    await api('/api/menu/sections', { method: 'POST', body: JSON.stringify({ name }) });
+    $('#itemcat-new').value = '';
+    toast(`Added ${name}.`);
+    loaders.itemcats();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+// Deleting a category says what else goes with it. The menu's own dishes are
+// the serious part — those are refused outright by the server unless the
+// deletion is forced, and forcing it is not offered here.
+$('#itemcat-sections').addEventListener('click', async (e) => {
+  const button = e.target.closest('[data-del-section]');
+  if (!button) return;
+
+  const id = Number(button.dataset.delSection);
+  const section = state.itemCats.sections.find((sec) => sec.id === id);
+  if (!section) return;
+
+  const consequences = [];
+  if (section.mapped_count) {
+    consequences.push(`${section.mapped_count} product${section.mapped_count === 1 ? '' : 's'} `
+      + 'will go back to having no category');
+  }
+  if (section.dish_count) {
+    consequences.push(`it still holds ${section.dish_count} menu dish`
+      + `${section.dish_count === 1 ? '' : 'es'}`);
+  }
+
+  if (!confirm(`Delete the category “${section.name}”?`
+    + (consequences.length ? `\n\n${consequences.join(', and ')}.` : ''))) return;
+
+  try {
+    await api(`/api/menu/sections/${id}`, { method: 'DELETE' });
+    toast(`Deleted ${section.name}.`);
+    loaders.itemcats();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+$('#itemcat-q').addEventListener('input', (e) => {
+  state.itemCats.q = e.target.value.trim();
+  loaders.itemcats();
+});
+$('#itemcat-unmapped').addEventListener('change', (e) => {
+  state.itemCats.unmapped = e.target.checked;
+  loaders.itemcats();
+});
+
 loaders.vendors = async function loadVendors() {
   const rows = await refreshVendors();
   $('#vendors-table').innerHTML = rows.length ? `
