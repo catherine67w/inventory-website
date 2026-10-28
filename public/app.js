@@ -1783,8 +1783,17 @@ function renderEditorLines() {
   updateBalanceNote();
 }
 
-function readEditorLines() {
-  return $$('#ed-items tr').map((tr) => {
+// A re-render is not an edit, so the remembered sum follows it without the
+// subtotal being touched.
+function rememberLineSum() {
+  if (state.editor) state.editor.lineSum = lineSum();
+}
+
+// Blank rows are dropped when saving, but kept while editing: the row indices
+// in the table have to match the array, or removing a line removes a different
+// one than the one clicked.
+function readEditorLines({ all = false } = {}) {
+  const rows = $$('#ed-items tr').map((tr) => {
     const get = (f) => tr.querySelector(`[data-f="${f}"]`).value;
     return {
       description: get('description'),
@@ -1795,24 +1804,64 @@ function readEditorLines() {
       unit_price: Number(get('unit_price')) || 0,
       extended_price: Number(get('extended_price')) || 0,
     };
-  }).filter((i) => i.description.trim());
+  });
+  return all ? rows : rows.filter((i) => i.description.trim());
+}
+
+const lineSum = () => round2(readEditorLines({ all: true })
+  .reduce((s, i) => s + i.extended_price, 0));
+
+// Money follows the lines when it was already in step with them. If the
+// subtotal matched the lines before a line was added, removed or repriced, it
+// should still match afterwards rather than quietly keeping the old figure.
+//
+// When the two disagree the subtotal is left alone: that is usually a line the
+// reading missed, and the figure printed on the invoice is the one that counts.
+// The note offers to take the lines' figure instead, as a deliberate click.
+function syncMoneyToLines() {
+  const previous = state.editor ? state.editor.lineSum : null;
+  const current = lineSum();
+  if (state.editor) state.editor.lineSum = current;
+  if (previous === null || Math.abs(current - previous) <= 0.02) return;
+
+  const subtotal = Number($('#ed-subtotal').value) || 0;
+  if (Math.abs(subtotal - previous) > 0.02) return;   // it was already out of step
+
+  applyLineSum(current);
+}
+
+// Sets the subtotal from the lines, and carries the total with it when the
+// total was the sum of its parts. A hand-typed total that never agreed is left
+// as it is — the note will go on saying so.
+function applyLineSum(sum) {
+  const tax = Number($('#ed-tax').value) || 0;
+  const freight = Number($('#ed-freight').value) || 0;
+  const discount = Number($('#ed-discount').value) || 0;
+  const before = round2((Number($('#ed-subtotal').value) || 0) + tax + freight - discount);
+  const totalWasDerived = Math.abs((Number($('#ed-total').value) || 0) - before) <= 0.02;
+
+  $('#ed-subtotal').value = sum.toFixed(2);
+  if (totalWasDerived) $('#ed-total').value = round2(sum + tax + freight - discount).toFixed(2);
+  updateBalanceNote();
 }
 
 function updateBalanceNote() {
-  const lines = readEditorLines();
-  const lineSum = lines.reduce((s, i) => s + i.extended_price, 0);
+  const lineSum = round2(readEditorLines({ all: true })
+    .reduce((s, i) => s + i.extended_price, 0));
   const subtotal = Number($('#ed-subtotal').value) || 0;
   const total = Number($('#ed-total').value) || 0;
   const computed = subtotal + (Number($('#ed-tax').value) || 0) + (Number($('#ed-freight').value) || 0) - (Number($('#ed-discount').value) || 0);
 
   const notes = [`Line items add up to ${money(lineSum)}.`];
+  let offer = '';
   if (Math.abs(lineSum - subtotal) > 0.02) {
     notes.push(`That is ${money(Math.abs(lineSum - subtotal))} ${lineSum > subtotal ? 'above' : 'below'} the subtotal — check for a missed or duplicated line.`);
+    offer = ` <button type="button" class="link" id="ed-use-lines">Use ${money(lineSum)} as the subtotal</button>`;
   }
   if (Math.abs(computed - total) > 0.02) {
     notes.push(`Subtotal + tax + freight − discount is ${money(computed)}, which does not match the total.`);
   }
-  $('#ed-balance').textContent = notes.join(' ');
+  $('#ed-balance').innerHTML = esc(notes.join(' ')) + offer;
 }
 
 function openEditor(data) {
@@ -1834,6 +1883,9 @@ function openEditor(data) {
     items: (base.items || []).map((i) => ({ ...i })),
     // Kept so taking a page out can say which of the two things it will do.
     pages: (base.pages || []).map((pg) => ({ ...pg })),
+    // The lines' sum as the editor opened, so an edit can tell whether the
+    // subtotal was in step with the lines before it.
+    lineSum: round2((base.items || []).reduce((s, i) => s + (Number(i.extended_price) || 0), 0)),
   };
 
   const u = state.editor.usage;
@@ -1886,18 +1938,20 @@ async function editInvoice(id) {
 }
 
 $('#ed-add-line').addEventListener('click', () => {
-  state.editor.items = readEditorLines();
+  state.editor.items = readEditorLines({ all: true });
   state.editor.items.push({ description: '', sku: '', category: 'Uncategorized', quantity: 1, unit: '', unit_price: 0, extended_price: 0 });
   renderEditorLines();
+  rememberLineSum();
 });
 
 $('#ed-items').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-remove-line]');
   if (!btn) return;
-  const items = readEditorLines();
+  const items = readEditorLines({ all: true });
   items.splice(Number(btn.dataset.removeLine), 1);
   state.editor.items = items;
   renderEditorLines();
+  syncMoneyToLines();
 });
 
 // Keep quantity × unit price in sync with the extended price as the user types.
@@ -1911,7 +1965,15 @@ $('#ed-items').addEventListener('input', (e) => {
   } else if (field === 'extended_price' && val('quantity')) {
     tr.querySelector('[data-f="unit_price"]').value = (val('extended_price') / val('quantity')).toFixed(4);
   }
+  syncMoneyToLines();
   updateBalanceNote();
+});
+
+// The offer in the note, taken up.
+$('#ed-balance').addEventListener('click', (e) => {
+  if (e.target.id !== 'ed-use-lines') return;
+  applyLineSum(lineSum());
+  if (state.editor) state.editor.lineSum = lineSum();
 });
 
 ['#ed-subtotal', '#ed-tax', '#ed-freight', '#ed-discount', '#ed-total'].forEach((sel) =>
