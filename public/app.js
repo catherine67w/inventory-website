@@ -1391,7 +1391,120 @@ $('#trend-result').addEventListener('click', (e) => {
 
 /* ---------- net sales ---------- */
 
+/* ---------- Toast ---------- */
+
+// Net sales read out of the till rather than typed in or uploaded. The secret
+// never comes back from the server, so the field stays blank and an empty
+// field means "keep what is stored".
+
+async function refreshToast() {
+  let status;
+  try {
+    status = await api('/api/toast');
+  } catch {
+    return;
+  }
+  state.toast = status;
+
+  // The client ID is not sent back in full, so the field is left as typed; the
+  // line above the form says which one is stored.
+  if (!$('#toast-guid').value) $('#toast-guid').value = status.restaurant_guid || '';
+  if (!$('#toast-host').value) $('#toast-host').value = status.hostname || '';
+  $('#toast-secret').placeholder = status.secret_set
+    ? 'stored \u2014 leave blank to keep it'
+    : 'paste the client secret';
+  $('#toast-auto').checked = status.auto;
+
+  const parts = [];
+  parts.push(status.configured ? 'Connected' : 'Not connected yet');
+  if (status.client_id_tail) parts.push(`client ID ending ${status.client_id_tail}`);
+  if (status.last_pull) {
+    parts.push(`last fetched ${new Date(status.last_pull).toLocaleString()}`);
+  }
+  $('#toast-state').textContent = parts.join(' \u00b7 ');
+  $('#toast-state').classList.toggle('warn-text', Boolean(status.last_error));
+  if (status.last_error) {
+    $('#toast-state').textContent += ` \u00b7 last error: ${status.last_error}`;
+  }
+}
+
+$('#toast-save').addEventListener('click', async (e) => {
+  e.preventDefault();
+  try {
+    await api('/api/toast', {
+      method: 'POST',
+      body: JSON.stringify({
+        client_id: $('#toast-client-id').value.trim(),
+        client_secret: $('#toast-secret').value.trim(),
+        restaurant_guid: $('#toast-guid').value.trim(),
+        hostname: $('#toast-host').value.trim(),
+        auto: $('#toast-auto').checked,
+      }),
+    });
+    $('#toast-secret').value = '';
+    toast('Saved.');
+    refreshToast();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+$('#toast-test').addEventListener('click', async (e) => {
+  e.preventDefault();
+  $('#toast-result').textContent = 'Signing in\u2026';
+  try {
+    const { day } = await api('/api/toast/test', { method: 'POST', body: JSON.stringify({}) });
+    $('#toast-result').textContent =
+      `Worked. ${day.date}: ${money(day.net_sales)} across ${day.orders} order`
+      + `${day.orders === 1 ? '' : 's'}${day.guests ? `, ${day.guests} guests` : ''}. `
+      + 'Nothing was saved.';
+    refreshToast();
+  } catch (err) {
+    $('#toast-result').textContent = err.message;
+    refreshToast();
+  }
+});
+
+$('#toast-pull').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const from = $('#toast-from').value;
+  const to = $('#toast-to').value || from;
+  if (!from) return toast('Pick a start date.', true);
+
+  $('#toast-result').textContent = 'Reading from Toast\u2026 a long range takes a moment per day.';
+  try {
+    let result = await api('/api/toast/pull', {
+      method: 'POST', body: JSON.stringify({ from, to }),
+    });
+
+    // Days entered by hand are kept unless replacing them is agreed to here.
+    if (result.skipped.length) {
+      const list = result.skipped.slice(0, 8).join(', ')
+        + (result.skipped.length > 8 ? `, and ${result.skipped.length - 8} more` : '');
+      if (confirm(`${result.skipped.length} day${result.skipped.length === 1 ? ' was' : 's were'} `
+        + `entered by hand and left alone:\n\n${list}\n\nReplace them with what Toast says?`)) {
+        result = await api('/api/toast/pull', {
+          method: 'POST', body: JSON.stringify({ from, to, replace: true }),
+        });
+      }
+    }
+
+    const bits = [`Stored ${result.stored} day${result.stored === 1 ? '' : 's'}, ${money(result.total)} in all.`];
+    if (result.skipped.length) bits.push(`${result.skipped.length} left as entered.`);
+    if (result.failed.length) {
+      bits.push(`${result.failed.length} could not be read: `
+        + result.failed.slice(0, 3).map((f) => f.date).join(', ') + '.');
+    }
+    $('#toast-result').textContent = bits.join(' ');
+    loaders.sales();
+    refreshToast();
+  } catch (err) {
+    $('#toast-result').textContent = err.message;
+  }
+});
+
 loaders.sales = async function loadSales() {
+  refreshToast();
   const params = new URLSearchParams();
   if ($('#sales-from').value) params.set('from', $('#sales-from').value);
   if ($('#sales-to').value) params.set('to', $('#sales-to').value);

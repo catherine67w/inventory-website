@@ -189,6 +189,45 @@
       <div class="view-head">
         <h1>Net sales</h1>
       </div>
+      <div class="card" id="toast-card">
+        <h2>Toast</h2>
+        <p class="muted small" id="toast-state">Checking…</p>
+
+        <form class="field-grid" id="toast-form">
+          <label>Client ID
+            <input type="text" id="toast-client-id" autocomplete="off" spellcheck="false">
+          </label>
+          <label>Client secret
+            <input type="password" id="toast-secret" autocomplete="new-password"
+              placeholder="leave blank to keep the stored one">
+          </label>
+          <label>Restaurant ID
+            <input type="text" id="toast-guid" autocomplete="off" spellcheck="false">
+          </label>
+          <label>Address
+            <input type="text" id="toast-host" autocomplete="off" spellcheck="false"
+              placeholder="https://ws-api.toasttab.com">
+          </label>
+        </form>
+
+        <div class="filters">
+          <label class="check"><input type="checkbox" id="toast-auto"> Fetch yesterday automatically, once a day</label>
+          <button class="btn ghost" id="toast-save">Save</button>
+          <button class="btn ghost" id="toast-test">Test connection</button>
+        </div>
+
+        <div class="filters">
+          <label>From <input type="date" id="toast-from"></label>
+          <label>To <input type="date" id="toast-to"></label>
+          <button class="btn" id="toast-pull">Fetch these days</button>
+        </div>
+        <p class="muted small" id="toast-result"></p>
+        <p class="muted small">Read-only credentials, made in Toast Web under
+          <strong>Integrations → Toast API access</strong>. The secret is kept on the server and
+          is never sent back to this page. Days you entered by hand are never overwritten without
+          asking.</p>
+      </div>
+
       <div class="card">
         <h2>Add or update a day</h2>
         <form class="inline-form" id="sales-form">

@@ -14,6 +14,7 @@ const { readZipBinaryFiles } = require('./spreadsheet');
 const backups = require('./backup');
 const Database = require('better-sqlite3');
 const { CATEGORIES, GROUPS, NAMES, groupOf } = require('./categories');
+const toast = require('./toast');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -982,6 +983,212 @@ function missingDates(entries, period) {
 
 // Read one or more sales reports. Nothing is stored yet — the response is a
 // draft the user checks before saving, same as invoices.
+// --- Toast ----------------------------------------------------------------
+
+// Net sales read straight out of the till, instead of exported and uploaded.
+//
+// The credentials are the restaurant's own read-only ones from Toast Web
+// (Integrations -> Toast API access). They are kept in the settings table, the
+// secret never leaves the server, and nothing here can write to Toast.
+
+const TOAST_KEYS = {
+  hostname: 'toast_hostname',
+  clientId: 'toast_client_id',
+  clientSecret: 'toast_client_secret',
+  restaurantGuid: 'toast_restaurant_guid',
+  auto: 'toast_auto',
+  lastPull: 'toast_last_pull',
+  lastError: 'toast_last_error',
+};
+
+function toastCredentials() {
+  const clientId = auth.getSetting(TOAST_KEYS.clientId, '');
+  const clientSecret = auth.getSetting(TOAST_KEYS.clientSecret, '');
+  const restaurantGuid = auth.getSetting(TOAST_KEYS.restaurantGuid, '');
+  if (!clientId || !clientSecret || !restaurantGuid) return null;
+  return {
+    hostname: auth.getSetting(TOAST_KEYS.hostname, '') || toast.DEFAULT_HOST,
+    clientId,
+    clientSecret,
+    restaurantGuid,
+  };
+}
+
+// Enough to recognise which credentials are in use, not enough to use them.
+const tail = (value) => (value && value.length > 4 ? '\u2026' + value.slice(-4) : '');
+
+function toastStatus() {
+  const credentials = toastCredentials();
+  return {
+    configured: Boolean(credentials),
+    hostname: auth.getSetting(TOAST_KEYS.hostname, '') || toast.DEFAULT_HOST,
+    client_id_tail: tail(auth.getSetting(TOAST_KEYS.clientId, '')),
+    secret_set: Boolean(auth.getSetting(TOAST_KEYS.clientSecret, '')),
+    restaurant_guid: auth.getSetting(TOAST_KEYS.restaurantGuid, ''),
+    auto: auth.getSetting(TOAST_KEYS.auto, '') === '1',
+    last_pull: auth.getSetting(TOAST_KEYS.lastPull, ''),
+    last_error: auth.getSetting(TOAST_KEYS.lastError, ''),
+  };
+}
+
+app.get('/api/toast', (req, res) => res.json(toastStatus()));
+
+app.post('/api/toast', (req, res) => {
+  if (req.body.hostname !== undefined) {
+    const hostname = String(req.body.hostname || '').trim();
+    // A credential sent to the wrong host is a credential given away, so only
+    // Toast's own hosts are accepted.
+    if (hostname && !/^https:\/\/[A-Za-z0-9.-]+\.toasttab\.com\/?$/.test(hostname)) {
+      return res.status(400).json({ error: 'That is not a Toast address. It should look like https://ws-api.toasttab.com.' });
+    }
+    auth.setSetting(TOAST_KEYS.hostname, hostname);
+  }
+  if (req.body.client_id !== undefined) {
+    auth.setSetting(TOAST_KEYS.clientId, String(req.body.client_id || '').trim());
+  }
+  if (req.body.restaurant_guid !== undefined) {
+    auth.setSetting(TOAST_KEYS.restaurantGuid, String(req.body.restaurant_guid || '').trim());
+  }
+  // An empty secret means "leave the stored one alone", so saving the other
+  // fields does not require typing it out again.
+  if (req.body.client_secret) {
+    auth.setSetting(TOAST_KEYS.clientSecret, String(req.body.client_secret).trim());
+  }
+  if (req.body.forget_secret) auth.setSetting(TOAST_KEYS.clientSecret, '');
+  if (req.body.auto !== undefined) auth.setSetting(TOAST_KEYS.auto, req.body.auto ? '1' : '');
+
+  const credentials = toastCredentials();
+  if (credentials) toast.forgetToken(credentials);
+  auth.setSetting(TOAST_KEYS.lastError, '');
+  res.json(toastStatus());
+});
+
+// Signs in and reads one day without storing anything, so the connection can
+// be proved before it is trusted with the sales figures.
+app.post('/api/toast/test', wrap(async (req, res) => {
+  const credentials = toastCredentials();
+  if (!credentials) return res.status(400).json({ error: 'Enter the client ID, secret and restaurant ID first.' });
+
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '')
+    ? req.body.date
+    : new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+
+  try {
+    const day = await toast.salesForDay(credentials, date);
+    auth.setSetting(TOAST_KEYS.lastError, '');
+    res.json({ ok: true, day });
+  } catch (err) {
+    auth.setSetting(TOAST_KEYS.lastError, err.message);
+    res.status(502).json({ error: err.message });
+  }
+}));
+
+// Reads a range of business days and stores them as the sales figures.
+//
+// A day entered by hand, or read off an uploaded report, is left alone unless
+// the caller says to replace it: the person who typed it may have been
+// reconciling something the till does not know about.
+app.post('/api/toast/pull', wrap(async (req, res) => {
+  const credentials = toastCredentials();
+  if (!credentials) return res.status(400).json({ error: 'Toast is not connected yet.' });
+
+  const from = String(req.body.from || '');
+  const to = String(req.body.to || from);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ error: 'Give a start and end date in YYYY-MM-DD form.' });
+  }
+  const span = (new Date(`${to}T00:00:00Z`) - new Date(`${from}T00:00:00Z`)) / 86_400_000;
+  if (!(span >= 0)) return res.status(400).json({ error: 'The start date must be on or before the end date.' });
+  if (span > 366) return res.status(400).json({ error: 'Ask for a year or less at a time.' });
+
+  const replace = Boolean(req.body.replace);
+  const days = await toast.salesForRange(credentials, from, to);
+
+  const existing = db.prepare('SELECT sale_date, note FROM sales WHERE sale_date BETWEEN ? AND ?')
+    .all(from, to);
+  const heldByHand = new Map(existing
+    .filter((row) => !/^from toast/i.test(row.note || ''))
+    .map((row) => [row.sale_date, row.note || '']));
+
+  const stored = [];
+  const skipped = [];
+  const failed = days.filter((day) => day.error);
+
+  const save = db.prepare(`
+    INSERT INTO sales (sale_date, net_sales, note, period_start)
+    VALUES (@sale_date, @net_sales, @note, @sale_date)
+    ON CONFLICT(sale_date) DO UPDATE SET
+      net_sales = @net_sales, note = @note, period_start = @sale_date
+  `);
+
+  db.transaction(() => {
+    for (const day of days) {
+      if (day.error) continue;
+      if (heldByHand.has(day.date) && !replace) { skipped.push(day.date); continue; }
+      save.run({
+        sale_date: day.date,
+        net_sales: money(day.net_sales),
+        note: `From Toast \u00b7 ${day.orders} order${day.orders === 1 ? '' : 's'}`
+          + `${day.guests ? `, ${day.guests} guests` : ''}`,
+      });
+      stored.push(day);
+    }
+  })();
+
+  auth.setSetting(TOAST_KEYS.lastPull, new Date().toISOString());
+  auth.setSetting(TOAST_KEYS.lastError, failed.length ? failed[0].error : '');
+
+  res.json({
+    ok: true,
+    stored: stored.length,
+    total: money(stored.reduce((sum, day) => sum + day.net_sales, 0)),
+    skipped,
+    failed: failed.map((day) => ({ date: day.date, error: day.error })),
+    days: stored,
+  });
+}));
+
+// Yesterday, once a day, when switched on. Yesterday rather than today because
+// a business day is not closed until service ends.
+const TOAST_EVERY_HOURS = Number(process.env.TOAST_EVERY_HOURS || 24);
+
+async function runScheduledToastPull() {
+  const credentials = toastCredentials();
+  if (!credentials || auth.getSetting(TOAST_KEYS.auto, '') !== '1') return;
+
+  const date = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  try {
+    const existing = db.prepare('SELECT note FROM sales WHERE sale_date = ?').get(date);
+    if (existing && !/^from toast/i.test(existing.note || '')) {
+      console.log(`  toast: ${date} was entered by hand, left alone`);
+      return;
+    }
+    const day = await toast.salesForDay(credentials, date);
+    db.prepare(`
+      INSERT INTO sales (sale_date, net_sales, note, period_start)
+      VALUES (@sale_date, @net_sales, @note, @sale_date)
+      ON CONFLICT(sale_date) DO UPDATE SET
+        net_sales = @net_sales, note = @note, period_start = @sale_date
+    `).run({
+      sale_date: date,
+      net_sales: money(day.net_sales),
+      note: `From Toast \u00b7 ${day.orders} order${day.orders === 1 ? '' : 's'}`
+        + `${day.guests ? `, ${day.guests} guests` : ''}`,
+    });
+    auth.setSetting(TOAST_KEYS.lastPull, new Date().toISOString());
+    auth.setSetting(TOAST_KEYS.lastError, '');
+    console.log(`  toast: ${date} \u2014 ${day.orders} orders, ${day.net_sales}`);
+  } catch (err) {
+    auth.setSetting(TOAST_KEYS.lastError, err.message);
+    console.error('  toast pull failed:', err.message);
+  }
+}
+
+if (TOAST_EVERY_HOURS > 0) {
+  setInterval(runScheduledToastPull, TOAST_EVERY_HOURS * 3_600_000).unref();
+  setTimeout(runScheduledToastPull, 90_000).unref();
+}
+
 app.post('/api/sales/upload', upload.array('files', MAX_UPLOAD_FILES), wrap(async (req, res) => {
   const files = req.files || [];
   if (!files.length) return res.status(400).json({ error: 'No files were uploaded.' });
