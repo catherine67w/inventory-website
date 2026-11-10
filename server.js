@@ -176,6 +176,8 @@ app.get('/api/meta', (req, res) => {
   const problem = apiKeyProblem();
   res.json({
     categories: CATEGORIES,
+    // The menu's own sections, offered beside the GL category on each line.
+    menu_sections: db.prepare('SELECT id, name, name_zh FROM menu_sections ORDER BY sort_order, id').all(),
     groups: GROUPS,
     extraction: { enabled: !problem, problem, model: MODEL },
   });
@@ -316,7 +318,11 @@ app.get('/api/invoices/:id', (req, res) => {
     FROM invoices i JOIN vendors v ON v.id = i.vendor_id WHERE i.id = ?
   `).get(req.params.id);
   if (!invoice) return res.status(404).json({ error: 'Invoice not found.' });
-  invoice.items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY line_no, id').all(invoice.id);
+  invoice.items = db.prepare(`
+    SELECT it.*, (SELECT m.section_id FROM item_sections m WHERE m.description = it.description)
+             AS menu_section_id
+    FROM invoice_items it WHERE it.invoice_id = ? ORDER BY it.line_no, it.id
+  `).all(invoice.id);
   invoice.pages = db.prepare(`
     SELECT p.id, p.file, p.original_name,
            EXISTS(SELECT 1 FROM invoice_merges m WHERE m.page_id = p.id) AS can_undo
@@ -391,6 +397,23 @@ function writeInvoice(payload, id = null) {
         NAMES.includes(it.category) ? it.category : 'Uncategorized',
         quantity, String(it.unit || ''), unitPrice, extended,
       );
+
+      // The menu category is a property of the product, not of this one line,
+      // so it is stored against the description for every invoice that carries
+      // it. An empty choice clears the mapping rather than leaving a stale one.
+      if (it.menu_section_id === null || it.menu_section_id === '') {
+        db.prepare('DELETE FROM item_sections WHERE description = ?').run(description);
+      } else if (it.menu_section_id !== undefined) {
+        const section = db.prepare('SELECT id FROM menu_sections WHERE id = ?').get(it.menu_section_id);
+        if (section) {
+          db.prepare(`
+            INSERT INTO item_sections (description, section_id, updated_at)
+            VALUES (@description, @section_id, datetime('now'))
+            ON CONFLICT(description) DO UPDATE
+              SET section_id = @section_id, updated_at = datetime('now')
+          `).run({ description, section_id: section.id });
+        }
+      }
     });
     return invoiceId;
   });
@@ -1190,6 +1213,29 @@ app.get('/api/item-categories', (req, res) => {
     items: items.map((r) => ({ ...r, total_spend: money(r.total_spend) })),
     mapped_total: mapped,
   });
+});
+
+// What categories the named products already have. A draft off the upload has
+// no invoice row yet, so its lines can only be matched by description.
+app.post('/api/item-categories/lookup', (req, res) => {
+  const descriptions = (Array.isArray(req.body.descriptions) ? req.body.descriptions : [])
+    .map((d) => String(d || '').trim()).filter(Boolean);
+  if (!descriptions.length) return res.json({});
+
+  const rows = db.prepare(`
+    SELECT description, section_id FROM item_sections
+    WHERE description IN (${descriptions.map(() => '?').join(',')})
+  `).all(...descriptions);
+
+  // Keyed by the description as asked for, since the match ignores case and
+  // the stored spelling may differ from the one on this invoice.
+  const byLower = new Map(rows.map((r) => [r.description.toLowerCase(), r.section_id]));
+  const out = {};
+  for (const description of descriptions) {
+    const id = byLower.get(description.toLowerCase());
+    if (id) out[description] = id;
+  }
+  res.json(out);
 });
 
 // Maps one or more products to a category, or clears them with a null section.

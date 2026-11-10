@@ -301,16 +301,16 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .totals-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-top: 16px; }
 
-.line-table { min-width: 900px; }
+.line-table { min-width: 1040px; }
 .line-table th, .line-table td { padding: 5px 6px; }
 .line-table input, .line-table select { padding: 5px 7px; font-size: 13px; }
-.line-table .w-desc { width: 30%; min-width: 230px; }
-.line-table .w-cat { width: 16%; min-width: 155px; }
-.line-table th:nth-child(2) { width: 11%; min-width: 90px; }   /* SKU */
-.line-table th:nth-child(4) { width: 8%;  min-width: 72px; }   /* Qty */
-.line-table th:nth-child(5) { width: 7%;  min-width: 64px; }   /* Unit */
-.line-table th:nth-child(6) { width: 12%; min-width: 96px; }   /* Unit price */
-.line-table th:nth-child(7) { width: 12%; min-width: 96px; }   /* Extended */
+.line-table .w-desc { width: 26%; min-width: 210px; }
+.line-table .w-cat { width: 14%; min-width: 145px; }           /* Category, Menu */
+.line-table th:nth-child(2) { width: 10%; min-width: 86px; }   /* SKU */
+.line-table th:nth-child(5) { width: 7%;  min-width: 70px; }   /* Qty */
+.line-table th:nth-child(6) { width: 6%;  min-width: 62px; }   /* Unit */
+.line-table th:nth-child(7) { width: 11%; min-width: 92px; }   /* Unit price */
+.line-table th:nth-child(8) { width: 11%; min-width: 92px; }   /* Extended */
 .line-table th:last-child   { width: 34px; }
 .line-table td.num input { text-align: right; }
 

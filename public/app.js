@@ -1904,12 +1904,23 @@ function categoryOptions(selected) {
     .join('');
 }
 
+// Which part of the menu the line is bought for. Set here or on the Item
+// categories tab — both write the same mapping, kept against the product name,
+// so choosing it once while reading an invoice covers it everywhere.
+function menuSectionOptions(selected) {
+  return ['<option value="">— none —</option>']
+    .concat((state.meta.menu_sections || []).map((sec) =>
+      `<option value="${sec.id}"${Number(sec.id) === Number(selected) ? ' selected' : ''}>${esc(sec.name)}</option>`))
+    .join('');
+}
+
 function lineRow(item, index) {
   return `
     <tr data-line="${index}">
       <td><input type="text" data-f="description" value="${esc(item.description)}"></td>
       <td><input type="text" data-f="sku" value="${esc(item.sku || '')}"></td>
       <td><select data-f="category">${categoryOptions(item.category)}</select></td>
+      <td><select data-f="menu_section_id">${menuSectionOptions(item.menu_section_id)}</select></td>
       <td class="num"><input type="number" step="0.001" data-f="quantity" value="${item.quantity ?? 0}"></td>
       <td><input type="text" data-f="unit" value="${esc(item.unit || '')}"></td>
       <td class="num"><input type="number" step="0.0001" data-f="unit_price" value="${item.unit_price ?? 0}"></td>
@@ -1943,6 +1954,7 @@ function readEditorLines({ all = false } = {}) {
       unit: get('unit'),
       unit_price: Number(get('unit_price')) || 0,
       extended_price: Number(get('extended_price')) || 0,
+      menu_section_id: get('menu_section_id') === '' ? null : Number(get('menu_section_id')),
     };
   });
   return all ? rows : rows.filter((i) => i.description.trim());
@@ -2060,8 +2072,41 @@ function openEditor(data) {
   $('#ed-delete').classList.toggle('hidden', !base.id);
 
   renderEditorLines();
+  fillMenuSections();
   refreshVendors();
   $('#editor').classList.remove('hidden');
+}
+
+// A draft straight off the upload has never been saved, so its lines carry no
+// menu category yet. Any that this product already has is filled in here, so a
+// choice made once does not have to be made again on the next invoice.
+async function fillMenuSections() {
+  const blank = $$('#ed-items tr').filter((tr) => {
+    const select = tr.querySelector('[data-f="menu_section_id"]');
+    return select && select.value === '';
+  });
+  if (!blank.length) return;
+
+  const descriptions = blank
+    .map((tr) => tr.querySelector('[data-f="description"]').value.trim())
+    .filter(Boolean);
+  if (!descriptions.length) return;
+
+  let known;
+  try {
+    known = await api('/api/item-categories/lookup', {
+      method: 'POST', body: JSON.stringify({ descriptions }),
+    });
+  } catch {
+    return;   // a mapping that will not load is not worth interrupting the edit for
+  }
+
+  for (const tr of blank) {
+    const description = tr.querySelector('[data-f="description"]').value.trim();
+    const select = tr.querySelector('[data-f="menu_section_id"]');
+    // Only fill what the user has not since chosen for themselves.
+    if (known[description] && select.value === '') select.value = String(known[description]);
+  }
 }
 
 async function editInvoice(id) {
