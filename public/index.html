@@ -494,6 +494,22 @@ npm run disable-2fa</pre>
         <button class="icon-btn" id="vi-close" aria-label="Close">✕</button>
       </div>
       <div class="modal-body">
+        <section class="vendor-contact">
+          <h3>Contact information</h3>
+          <div class="field-grid">
+            <label>Email address
+              <input type="email" id="vi-email" autocomplete="off" placeholder="orders@vendor.com">
+            </label>
+            <label>Phone number
+              <input type="tel" id="vi-phone" autocomplete="off" placeholder="(201) 555-0147">
+            </label>
+          </div>
+          <div class="filters">
+            <button class="btn ghost" id="vi-contact-save">Save contact details</button>
+            <span class="muted small" id="vi-contact-links"></span>
+          </div>
+        </section>
+
         <div class="filters">
           <label class="grow">Search their items
             <input type="search" id="vi-q" placeholder="product, SKU, category, or invoice #">

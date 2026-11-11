@@ -607,3 +607,6 @@ tbody tr.selected { background: var(--brand-soft); }
 }
 .sales-recon.ok { border-color: var(--ok); background: #eef7f1; color: var(--ok); }
 .sales-recon.off { border-color: var(--accent); background: #fdf1e8; color: var(--accent); }
+
+.vendor-contact { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+.vendor-contact h3 { margin: 0 0 10px; font-size: 14px; }

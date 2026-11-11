@@ -956,6 +956,52 @@ async function openVendorItems(vendorId) {
   await loadVendorItems();
 }
 
+// Contact details for the vendor whose panel is open. Shown as links as well
+// as fields: the reason to look up a supplier's number is almost always to
+// call them about the invoice on the screen.
+function showVendorContact(vendor) {
+  state.vendorItems.vendor = vendor;
+  $('#vi-email').value = vendor.email || '';
+  $('#vi-phone').value = vendor.phone || '';
+
+  const links = [];
+  if (vendor.email) {
+    // esc, not encodeURIComponent: the @ belongs in a mailto link as it is.
+    links.push(`<a class="link" href="mailto:${esc(vendor.email)}">${esc(vendor.email)}</a>`);
+  }
+  if (vendor.phone) {
+    // Everything that is not a digit or a leading plus is stripped for the
+    // dial link, while the number stays written however it was typed.
+    const dial = vendor.phone.replace(/[^\d+]/g, '');
+    links.push(`<a class="link" href="tel:${esc(dial)}">${esc(vendor.phone)}</a>`);
+  }
+  $('#vi-contact-links').innerHTML = links.length
+    ? links.join(' \u00b7 ')
+    : 'Nothing saved yet.';
+}
+
+$('#vi-contact-save').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const vendor = state.vendorItems.vendor;
+  if (!vendor) return;
+
+  try {
+    const saved = await api(`/api/vendors/${vendor.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: vendor.name,
+        email: $('#vi-email').value.trim(),
+        phone: $('#vi-phone').value.trim(),
+      }),
+    });
+    showVendorContact(saved);
+    toast('Contact details saved.');
+    loaders.vendors();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
 async function loadVendorItems() {
   const id = state.vendorItems.id;
   if (!id) return;
@@ -976,6 +1022,7 @@ async function loadVendorItems() {
   }
 
   $('#vi-title').textContent = data.vendor.name;
+  showVendorContact(data.vendor);
 
   const s = data.summary;
   const filtered = Boolean($('#vi-q').value.trim() || $('#vi-from').value || $('#vi-to').value);

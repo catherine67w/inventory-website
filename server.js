@@ -188,7 +188,7 @@ app.get('/api/meta', (req, res) => {
 
 app.get('/api/vendors', (req, res) => {
   res.json(db.prepare(`
-    SELECT v.id, v.name, v.contact, v.terms,
+    SELECT v.id, v.name, v.contact, v.terms, v.email, v.phone,
            COUNT(i.id)                AS invoice_count,
            COALESCE(SUM(i.total), 0)  AS total_spend,
            MAX(i.invoice_date)        AS last_invoice
@@ -211,10 +211,20 @@ app.post('/api/vendors', (req, res) => {
 app.put('/api/vendors/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM vendors WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Vendor not found.' });
-  db.prepare('UPDATE vendors SET name = ?, contact = ?, terms = ? WHERE id = ?').run(
+
+  const email = String(req.body.email ?? row.email ?? '').trim();
+  // Checked rather than corrected: an address that cannot be right is worth
+  // saying so about, but what counts as a valid one is not worth guessing at.
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'That does not look like an email address.' });
+  }
+
+  db.prepare('UPDATE vendors SET name = ?, contact = ?, terms = ?, email = ?, phone = ? WHERE id = ?').run(
     String(req.body.name || row.name).trim(),
     String(req.body.contact ?? row.contact),
     String(req.body.terms ?? row.terms),
+    email,
+    String(req.body.phone ?? row.phone ?? '').trim(),
     row.id,
   );
   res.json(db.prepare('SELECT * FROM vendors WHERE id = ?').get(row.id));

@@ -122,6 +122,18 @@ for (const [column, definition] of [
   }
 }
 
+// Vendor contact details, kept as their own columns rather than inside the
+// older free-text contact field, so they can be shown, linked and searched.
+for (const [column, definition] of [
+  ['email', "TEXT DEFAULT ''"],
+  ['phone', "TEXT DEFAULT ''"],
+]) {
+  const existing = db.prepare('PRAGMA table_info(vendors)').all().map((c) => c.name);
+  if (!existing.includes(column)) {
+    db.exec(`ALTER TABLE vendors ADD COLUMN ${column} ${definition}`);
+  }
+}
+
 // A long invoice is photographed a page at a time, so one invoice can own
 // several files. The first page stays in invoices.source_file; pages merged in
 // afterwards land here, so the photograph behind every line item is kept.
