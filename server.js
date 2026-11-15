@@ -186,17 +186,96 @@ app.get('/api/meta', (req, res) => {
 
 // --- vendors --------------------------------------------------------------
 
+// One address written two ways is one address: case, punctuation and runs of
+// spaces are all flattened before matching, and "street" and "st" are treated
+// as the same word, so a delivery answer is not lost to a comma.
+const ABBREVIATIONS = {
+  street: 'st', road: 'rd', avenue: 'ave', drive: 'dr', boulevard: 'blvd',
+  lane: 'ln', court: 'ct', place: 'pl', parkway: 'pkwy', highway: 'hwy',
+  suite: 'ste', apartment: 'apt', floor: 'fl', north: 'n', south: 's',
+  east: 'e', west: 'w', way: 'way',
+};
+
+function addressKey(address) {
+  return String(address || '')
+    .toLowerCase()
+    .replace(/[.,#]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => ABBREVIATIONS[word] || word)
+    .join(' ');
+}
+
 app.get('/api/vendors', (req, res) => {
+  const key = addressKey(req.query.address);
   res.json(db.prepare(`
     SELECT v.id, v.name, v.contact, v.terms, v.email, v.phone,
            COUNT(i.id)                AS invoice_count,
            COALESCE(SUM(i.total), 0)  AS total_spend,
-           MAX(i.invoice_date)        AS last_invoice
+           MAX(i.invoice_date)        AS last_invoice,
+           d.delivers                 AS delivers,
+           d.lead_time_days           AS lead_time_days,
+           d.note                     AS delivery_note
     FROM vendors v
     LEFT JOIN invoices i ON i.vendor_id = v.id
+    LEFT JOIN vendor_delivery d ON d.vendor_id = v.id AND d.address_key = @key
     GROUP BY v.id
     ORDER BY total_spend DESC, v.name
+  `).all({ key }));
+});
+
+// Every address a delivery answer has been recorded against, so the same one
+// can be picked again rather than retyped.
+app.get('/api/delivery-addresses', (req, res) => {
+  res.json(db.prepare(`
+    SELECT address, COUNT(*) AS vendor_count,
+           SUM(CASE WHEN delivers = 1 THEN 1 ELSE 0 END) AS delivering
+    FROM vendor_delivery GROUP BY address_key
+    ORDER BY vendor_count DESC, address
   `).all());
+});
+
+// What one vendor says about one address. Delivers is deliberately three-way:
+// not knowing is different from knowing they will not.
+app.put('/api/vendors/:id/delivery', (req, res) => {
+  const vendor = db.prepare('SELECT * FROM vendors WHERE id = ?').get(req.params.id);
+  if (!vendor) return res.status(404).json({ error: 'Vendor not found.' });
+
+  const address = String(req.body.address || '').trim();
+  if (!address) return res.status(400).json({ error: 'Enter the address first.' });
+  const key = addressKey(address);
+  if (!key) return res.status(400).json({ error: 'That address is empty once punctuation is removed.' });
+
+  const delivers = req.body.delivers === null || req.body.delivers === undefined || req.body.delivers === ''
+    ? null : (req.body.delivers ? 1 : 0);
+
+  let lead = null;
+  if (req.body.lead_time_days !== null && req.body.lead_time_days !== undefined && req.body.lead_time_days !== '') {
+    lead = Number(req.body.lead_time_days);
+    if (!Number.isFinite(lead) || lead < 0 || lead > 365) {
+      return res.status(400).json({ error: 'Give the lead time as a number of days.' });
+    }
+  }
+
+  // Nothing known about the address is nothing worth keeping a row for.
+  if (delivers === null && lead === null && !String(req.body.note || '').trim()) {
+    db.prepare('DELETE FROM vendor_delivery WHERE vendor_id = ? AND address_key = ?').run(vendor.id, key);
+    return res.json({ ok: true, cleared: true });
+  }
+
+  db.prepare(`
+    INSERT INTO vendor_delivery (vendor_id, address_key, address, delivers, lead_time_days, note, updated_at)
+    VALUES (@vendor_id, @key, @address, @delivers, @lead, @note, datetime('now'))
+    ON CONFLICT(vendor_id, address_key) DO UPDATE SET
+      address = @address, delivers = @delivers, lead_time_days = @lead,
+      note = @note, updated_at = datetime('now')
+  `).run({
+    vendor_id: vendor.id, key, address, delivers, lead,
+    note: String(req.body.note || '').trim(),
+  });
+
+  res.json(db.prepare('SELECT * FROM vendor_delivery WHERE vendor_id = ? AND address_key = ?')
+    .get(vendor.id, key));
 });
 
 app.post('/api/vendors', (req, res) => {

@@ -134,6 +134,29 @@ for (const [column, definition] of [
   }
 }
 
+// Where each vendor will deliver, and how long they take to get there.
+//
+// No one publishes delivery zones, so this is a record kept by hand: the
+// answer a supplier gave when asked. It is held per address rather than per
+// vendor, because the question is only ever asked about somewhere specific —
+// a second site, a commissary, an event.
+//
+// address_key is the address flattened for matching, so the same place typed
+// two ways is still one row.
+db.exec(`
+CREATE TABLE IF NOT EXISTS vendor_delivery (
+  vendor_id      INTEGER NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+  address_key    TEXT NOT NULL,
+  address        TEXT NOT NULL,
+  delivers       INTEGER,
+  lead_time_days REAL,
+  note           TEXT DEFAULT '',
+  updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (vendor_id, address_key)
+);
+CREATE INDEX IF NOT EXISTS idx_delivery_address ON vendor_delivery(address_key);
+`);
+
 // A long invoice is photographed a page at a time, so one invoice can own
 // several files. The first page stays in invoices.source_file; pages merged in
 // afterwards land here, so the photograph behind every line item is kept.

@@ -610,3 +610,5 @@ tbody tr.selected { background: var(--brand-soft); }
 
 .vendor-contact { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
 .vendor-contact h3 { margin: 0 0 10px; font-size: 14px; }
+
+.lead-input { width: 84px; text-align: right; }

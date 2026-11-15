@@ -161,6 +161,21 @@
         <h1>Vendors</h1>
         <button class="btn" id="vendor-new">Add vendor</button>
       </div>
+      <div class="card">
+        <h2>Delivery to an address</h2>
+        <div class="filters">
+          <label class="grow">Deliver to
+            <input type="text" id="delivery-address" list="delivery-address-options"
+              placeholder="1 American Dream Way, East Rutherford NJ">
+            <datalist id="delivery-address-options"></datalist>
+          </label>
+          <button class="btn" id="delivery-check">Show for this address</button>
+          <button class="btn ghost" id="delivery-clear">Clear</button>
+        </div>
+        <p class="muted small" id="delivery-note">Enter an address and each vendor below gains
+          two columns: whether they deliver there, and how long they take. Nothing is looked
+          up — this records what each supplier told you.</p>
+      </div>
       <div class="card" id="vendors-table"></div>
     </section>
 

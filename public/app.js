@@ -745,7 +745,8 @@ $('#history-close').addEventListener('click', () => $('#history').classList.add(
 /* ---------- vendors ---------- */
 
 async function refreshVendors() {
-  state.vendors = await api('/api/vendors');
+  const address = (state.deliveryAddress || '').trim();
+  state.vendors = await api('/api/vendors' + (address ? '?address=' + encodeURIComponent(address) : ''));
   $('#vendor-options').innerHTML = state.vendors.map((v) => `<option value="${esc(v.name)}">`).join('');
   return state.vendors;
 }
@@ -892,16 +893,25 @@ $('#itemcat-unmapped').addEventListener('change', (e) => {
 
 loaders.vendors = async function loadVendors() {
   const rows = await refreshVendors();
+  const address = (state.deliveryAddress || '').trim();
+
+  // The two delivery columns only appear once there is an address to answer
+  // about — without one they would be a question with no subject.
+  const deliveryHead = address
+    ? '<th>Delivers here</th><th class="num">Lead time</th>'
+    : '';
+
   $('#vendors-table').innerHTML = rows.length ? `
     <div class="table-scroll"><table>
       <thead><tr><th>Vendor</th><th class="num">Invoices</th>
-      <th class="num">Total spend</th><th>Last invoice</th><th></th></tr></thead>
+      <th class="num">Total spend</th><th>Last invoice</th>${deliveryHead}<th></th></tr></thead>
       <tbody>${rows.map((v) => `
         <tr class="clickable" data-vendor-items="${v.id}">
           <td>${esc(v.name)}</td>
           <td class="num">${v.invoice_count}</td>
           <td class="num">${money(v.total_spend)}</td>
           <td>${esc(v.last_invoice || '—')}</td>
+          ${address ? deliveryCells(v) : ''}
           <td class="num">
             <button class="btn small ghost" data-vendor-items="${v.id}">Search items</button>
             <button class="btn small ghost" data-vendor-edit="${v.id}">Edit</button>
@@ -910,7 +920,116 @@ loaders.vendors = async function loadVendors() {
       </tbody>
     </table></div>`
     : emptyRow('No vendors yet. They are created automatically when you save an invoice.');
+
+  refreshDeliveryAddresses();
 };
+
+// Three states, not two: a supplier nobody has asked yet is not the same as
+// one that said no, and showing them alike would hide the work still to do.
+function deliveryCells(vendor) {
+  const chosen = vendor.delivers === null || vendor.delivers === undefined
+    ? '' : String(vendor.delivers);
+  const option = (value, label) =>
+    `<option value="${value}"${chosen === value ? ' selected' : ''}>${label}</option>`;
+
+  return `
+    <td>
+      <select data-delivers="${vendor.id}" title="${esc(vendor.delivery_note || '')}">
+        ${option('', '— not asked —')}${option('1', 'Yes')}${option('0', 'No')}
+      </select>
+    </td>
+    <td class="num">
+      <input type="number" step="0.5" min="0" max="365" class="lead-input"
+        data-lead="${vendor.id}" placeholder="days"
+        value="${vendor.lead_time_days ?? ''}"
+        ${vendor.delivers === 0 ? 'disabled' : ''}>
+    </td>`;
+}
+
+async function saveDelivery(vendorId, changes) {
+  const vendor = state.vendors.find((v) => String(v.id) === String(vendorId));
+  if (!vendor) return;
+  const address = (state.deliveryAddress || '').trim();
+  if (!address) return;
+
+  const body = {
+    address,
+    delivers: 'delivers' in changes ? changes.delivers : vendor.delivers,
+    lead_time_days: 'lead_time_days' in changes ? changes.lead_time_days : vendor.lead_time_days,
+    note: vendor.delivery_note || '',
+  };
+  // A supplier that does not come here has no lead time to this address.
+  if (body.delivers === 0 || body.delivers === '0') body.lead_time_days = null;
+
+  try {
+    await api(`/api/vendors/${vendorId}/delivery`, { method: 'PUT', body: JSON.stringify(body) });
+    loaders.vendors();
+  } catch (err) {
+    toast(err.message, true);
+    loaders.vendors();
+  }
+}
+
+$('#vendors-table').addEventListener('change', (e) => {
+  const delivers = e.target.closest('[data-delivers]');
+  if (delivers) {
+    e.stopPropagation();
+    saveDelivery(delivers.dataset.delivers, {
+      delivers: delivers.value === '' ? null : Number(delivers.value),
+    });
+    return;
+  }
+  const lead = e.target.closest('[data-lead]');
+  if (lead) {
+    e.stopPropagation();
+    saveDelivery(lead.dataset.lead, {
+      lead_time_days: lead.value === '' ? null : Number(lead.value),
+      // Entering a lead time says they deliver, which saves answering twice.
+      ...(lead.value !== '' ? { delivers: 1 } : {}),
+    });
+  }
+});
+
+// Clicks inside the two delivery cells must not open the vendor's items.
+$('#vendors-table').addEventListener('click', (e) => {
+  if (e.target.closest('[data-delivers], [data-lead]')) e.stopPropagation();
+}, true);
+
+async function refreshDeliveryAddresses() {
+  try {
+    const addresses = await api('/api/delivery-addresses');
+    $('#delivery-address-options').innerHTML = addresses
+      .map((a) => `<option value="${esc(a.address)}">`).join('');
+
+    const address = (state.deliveryAddress || '').trim();
+    if (!address) return;
+    const here = addresses.find((a) => a.address === address);
+    $('#delivery-note').textContent = here
+      ? `${here.delivering} of ${here.vendor_count} vendor${here.vendor_count === 1 ? '' : 's'} `
+        + `asked about this address deliver to it.`
+      : 'Nothing recorded for this address yet — answer in the rows below.';
+  } catch { /* the list is a convenience, not the feature */ }
+}
+
+$('#delivery-check').addEventListener('click', (e) => {
+  e.preventDefault();
+  state.deliveryAddress = $('#delivery-address').value.trim();
+  loaders.vendors();
+});
+
+$('#delivery-address').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); $('#delivery-check').click(); }
+});
+
+$('#delivery-clear').addEventListener('click', (e) => {
+  e.preventDefault();
+  $('#delivery-address').value = '';
+  state.deliveryAddress = '';
+  $('#delivery-note').textContent = 'Enter an address and each vendor below gains two columns: '
+    + 'whether they deliver there, and how long they take. Nothing is looked up — this records '
+    + 'what each supplier told you.';
+  loaders.vendors();
+});
 
 $('#vendor-new').addEventListener('click', async () => {
   const name = prompt('Vendor name');
