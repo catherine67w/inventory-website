@@ -907,7 +907,9 @@ loaders.vendors = async function loadVendors() {
       <th class="num">Total spend</th><th>Last invoice</th>${deliveryHead}<th></th></tr></thead>
       <tbody>${rows.map((v) => `
         <tr class="clickable" data-vendor-items="${v.id}">
-          <td>${esc(v.name)}</td>
+          <td>${esc(v.name)}
+            <button class="btn small ghost" data-vendor-email="${v.id}">Write email</button>
+          </td>
           <td class="num">${v.invoice_count}</td>
           <td class="num">${money(v.total_spend)}</td>
           <td>${esc(v.last_invoice || '—')}</td>
@@ -1040,6 +1042,13 @@ $('#vendor-new').addEventListener('click', async () => {
 });
 
 $('#vendors-table').addEventListener('click', async (e) => {
+  const mail = e.target.closest('[data-vendor-email]');
+  if (mail) {
+    e.stopPropagation();
+    openVendorEmail(mail.dataset.vendorEmail);
+    return;
+  }
+
   const btn = e.target.closest('[data-vendor-edit]');
   if (!btn) {
     const row = e.target.closest('[data-vendor-items]');
@@ -1119,6 +1128,128 @@ $('#vi-contact-save').addEventListener('click', async (e) => {
   } catch (err) {
     toast(err.message, true);
   }
+});
+
+/* ---------- write an email to a vendor ---------- */
+
+// A draft, not a send. The model turns notes into sentences; the text then sits
+// in an editable box and leaves through the user's own mail program, so nothing
+// reaches a supplier that the user has not read.
+function openVendorEmail(vendorId) {
+  const vendor = state.vendors.find((v) => String(v.id) === String(vendorId));
+  if (!vendor) return;
+
+  state.emailVendor = vendor;
+  $('#ve-title').textContent = `Write an email to ${vendor.name}`;
+  $('#ve-notes').value = '';
+  $('#ve-subject').value = '';
+  $('#ve-body').value = '';
+  $('#ve-doc').classList.add('hidden');
+  $('#ve-copy').classList.add('hidden');
+  $('#ve-open').classList.add('hidden');
+  $('#ve-state').className = 'muted small';
+  $('#ve-state').textContent = 'Type a few notes above. The draft appears below and stays '
+    + 'yours to edit — nothing is sent from here.';
+  $('#ve-to').textContent = vendor.email
+    ? `Goes to ${vendor.email}`
+    : 'No email address saved for this vendor — open their panel to add one.';
+
+  $('#vendor-email').classList.remove('hidden');
+  $('#ve-notes').focus();
+}
+
+function closeVendorEmail() {
+  $('#vendor-email').classList.add('hidden');
+  state.emailVendor = null;
+}
+
+$('#ve-close').addEventListener('click', closeVendorEmail);
+$('#ve-done').addEventListener('click', closeVendorEmail);
+
+async function writeVendorEmail() {
+  const vendor = state.emailVendor;
+  if (!vendor) return;
+
+  const notes = $('#ve-notes').value.trim();
+  if (!notes) {
+    toast('Say what the email should be about first.', true);
+    $('#ve-notes').focus();
+    return;
+  }
+
+  const button = $('#ve-write');
+  const hadDraft = Boolean($('#ve-body').value.trim());
+  button.disabled = true;
+  button.textContent = 'Writing…';
+  $('#ve-state').className = 'muted small';
+  $('#ve-state').textContent = hadDraft ? 'Revising the draft…' : 'Writing the draft…';
+
+  try {
+    const draft = await api(`/api/vendors/${vendor.id}/email`, {
+      method: 'POST',
+      body: JSON.stringify({
+        notes,
+        // Sending the text on screen makes the second press a revision of what
+        // is there, rather than a new email that discards the user's edits.
+        previous: $('#ve-body').value,
+      }),
+    });
+
+    $('#ve-subject').value = draft.subject || '';
+    $('#ve-body').value = draft.body || '';
+    $('#ve-doc').classList.remove('hidden');
+    $('#ve-copy').classList.remove('hidden');
+    $('#ve-open').classList.remove('hidden');
+    $('#ve-state').textContent = `Draft ready — edit it freely. ${cost(draft.usage?.cost)} of reading credit.`;
+    $('#ve-notes').value = '';
+    $('#ve-notes').placeholder = 'Ask for a change — "shorter", "firmer", "add that we pay on delivery" — then press Write it again.';
+    $('#ve-body').focus();
+  } catch (err) {
+    $('#ve-state').className = 'warn-text small';
+    $('#ve-state').textContent = err.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Write it';
+  }
+}
+
+$('#ve-write').addEventListener('click', (e) => { e.preventDefault(); writeVendorEmail(); });
+
+// Cmd/Ctrl+Enter writes, so notes can be typed and sent off without reaching
+// for the mouse. Plain Enter still makes a new line in the notes.
+$('#ve-notes').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); writeVendorEmail(); }
+});
+
+$('#ve-copy').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const text = `Subject: ${$('#ve-subject').value}\n\n${$('#ve-body').value}`;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Email copied.');
+  } catch {
+    // Clipboard access can be refused; selecting the text still works.
+    $('#ve-body').select();
+    toast('Press Cmd+C to copy the selected text.', true);
+  }
+});
+
+// mailto hands the draft to whatever mail program the Mac is set up with. The
+// user still presses send there, which is the point.
+$('#ve-open').addEventListener('click', (e) => {
+  e.preventDefault();
+  const vendor = state.emailVendor;
+  if (!vendor) return;
+  const to = vendor.email || '';
+  const url = `mailto:${encodeURIComponent(to)}`
+    + `?subject=${encodeURIComponent($('#ve-subject').value)}`
+    + `&body=${encodeURIComponent($('#ve-body').value)}`;
+  // Very long bodies overflow what some mail clients accept in a mailto.
+  if (url.length > 1800) {
+    toast('This draft is too long for the mail link — use Copy instead.', true);
+    return;
+  }
+  window.location.href = url;
 });
 
 async function loadVendorItems() {

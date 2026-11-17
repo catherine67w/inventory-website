@@ -548,6 +548,39 @@ npm run disable-2fa</pre>
     </div>
   </div>
 
+  <!-- WRITE AN EMAIL TO A VENDOR -->
+  <div class="modal hidden" id="vendor-email">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="ve-title">Write an email</h2>
+        <button class="icon-btn" id="ve-close" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="block">What do you want to say?
+          <textarea id="ve-notes" rows="3" placeholder="Chase the credit for the 2 cases of short rib missing from Tuesday's delivery. Ask them to confirm by Friday."></textarea>
+        </label>
+        <div class="filters">
+          <button class="btn" id="ve-write">Write it</button>
+          <span class="muted small" id="ve-state">Type a few notes above. The draft appears below and stays yours to edit — nothing is sent from here.</span>
+        </div>
+
+        <div class="doc hidden" id="ve-doc">
+          <label class="block doc-subject">Subject
+            <input type="text" id="ve-subject" placeholder="Subject line">
+          </label>
+          <textarea id="ve-body" class="doc-body" rows="18" placeholder="The email will appear here."></textarea>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <span class="muted small" id="ve-to"></span>
+        <span class="spacer"></span>
+        <button class="btn ghost hidden" id="ve-copy">Copy</button>
+        <button class="btn hidden" id="ve-open">Open in mail</button>
+        <button class="btn ghost" id="ve-done">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ADD PURCHASED ITEM TO A MENU ITEM -->
   <div class="modal hidden" id="link-editor">
     <div class="modal-card narrow">

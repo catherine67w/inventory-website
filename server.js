@@ -15,6 +15,7 @@ const backups = require('./backup');
 const Database = require('better-sqlite3');
 const { CATEGORIES, GROUPS, NAMES, groupOf } = require('./categories');
 const toast = require('./toast');
+const { draftEmail } = require('./email');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -276,6 +277,44 @@ app.put('/api/vendors/:id/delivery', (req, res) => {
 
   res.json(db.prepare('SELECT * FROM vendor_delivery WHERE vendor_id = ? AND address_key = ?')
     .get(vendor.id, key));
+});
+
+// Draft an email to this vendor from notes the user types.
+//
+// Nothing is sent from here. The draft lands in a box the user edits, and
+// sending stays with their own mail program — an invoicing tool should not be
+// able to mail a supplier on its own.
+app.post('/api/vendors/:id/email', async (req, res) => {
+  const vendor = db.prepare('SELECT * FROM vendors WHERE id = ?').get(req.params.id);
+  if (!vendor) return res.status(404).json({ error: 'Vendor not found.' });
+
+  const notes = String(req.body.notes || '').trim();
+  if (!notes) {
+    return res.status(400).json({ error: 'Say what the email should be about first.' });
+  }
+  if (notes.length > 4000) {
+    return res.status(400).json({ error: 'Those notes are longer than the email will be. Shorten them.' });
+  }
+
+  // A handful of recent invoices, so "the last delivery" and "invoice 4471"
+  // can be named accurately instead of guessed at.
+  const invoices = db.prepare(`
+    SELECT invoice_number, invoice_date, total
+    FROM invoices WHERE vendor_id = ?
+    ORDER BY invoice_date DESC, id DESC LIMIT 8
+  `).all(vendor.id);
+
+  try {
+    const draft = await draftEmail({
+      vendor,
+      invoices,
+      notes,
+      previous: String(req.body.previous || ''),
+    });
+    res.json(draft);
+  } catch (err) {
+    res.status(err.code === 'BAD_API_KEY' ? 400 : 502).json({ error: err.message });
+  }
 });
 
 app.post('/api/vendors', (req, res) => {

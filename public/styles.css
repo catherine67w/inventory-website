@@ -612,3 +612,36 @@ tbody tr.selected { background: var(--brand-soft); }
 .vendor-contact h3 { margin: 0 0 10px; font-size: 14px; }
 
 .lead-input { width: 84px; text-align: right; }
+
+/* The email draft, made to read like a page rather than a form field: the
+   point is to look at the writing, not at the input it happens to live in. */
+.doc {
+  margin-top: 16px;
+  background: #fff;
+  border: 1px solid var(--line, #d8dce3);
+  border-radius: 8px;
+  padding: 20px 24px;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06);
+}
+.doc .doc-subject { margin-top: 0; }
+.doc .doc-subject input {
+  font-size: 16px;
+  font-weight: 600;
+  border: 0;
+  border-bottom: 1px solid var(--line, #d8dce3);
+  border-radius: 0;
+  padding: 6px 0;
+  background: transparent;
+}
+.doc .doc-subject input:focus { outline: 0; border-bottom-color: #2b6cb0; }
+.doc-body {
+  width: 100%;
+  margin-top: 14px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  resize: vertical;
+  font: 15px/1.65 ui-serif, Georgia, "Times New Roman", serif;
+  color: #1a202c;
+}
+.doc-body:focus { outline: 0; }
