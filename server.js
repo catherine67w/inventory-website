@@ -279,6 +279,93 @@ app.put('/api/vendors/:id/delivery', (req, res) => {
     .get(vendor.id, key));
 });
 
+// What a merge would move, so the dialog can say it before anything happens.
+app.get('/api/vendors/:id/merge-preview', (req, res) => {
+  const vendor = db.prepare('SELECT * FROM vendors WHERE id = ?').get(req.params.id);
+  if (!vendor) return res.status(404).json({ error: 'Vendor not found.' });
+
+  const others = db.prepare(`
+    SELECT v.id, v.name, COUNT(i.id) AS invoice_count,
+           COALESCE(SUM(i.total), 0) AS total_spend
+    FROM vendors v
+    LEFT JOIN invoices i ON i.vendor_id = v.id
+    WHERE v.id != ?
+    GROUP BY v.id
+    ORDER BY v.name COLLATE NOCASE
+  `).all(vendor.id);
+
+  const mine = db.prepare(`
+    SELECT COUNT(*) AS invoice_count, COALESCE(SUM(total), 0) AS total_spend
+    FROM invoices WHERE vendor_id = ?
+  `).get(vendor.id);
+
+  res.json({ vendor: { ...vendor, ...mine }, others });
+});
+
+// Fold one vendor into another.
+//
+// Two rows for one supplier split their spend, their price history and their
+// contact details, so neither row tells the truth. Merging moves every invoice
+// across, keeps whichever contact details exist, and retires the losing name as
+// an alias so the next invoice spelled that way does not recreate it.
+//
+// Invoices are the only thing that carries money here, and they are moved
+// rather than copied, so no total changes: the same invoices simply sit under
+// one vendor instead of two.
+app.post('/api/vendors/:id/merge', (req, res) => {
+  const keep = db.prepare('SELECT * FROM vendors WHERE id = ?').get(req.params.id);
+  if (!keep) return res.status(404).json({ error: 'Vendor not found.' });
+
+  const drop = db.prepare('SELECT * FROM vendors WHERE id = ?').get(req.body.from);
+  if (!drop) return res.status(404).json({ error: 'The vendor to merge in was not found.' });
+  if (drop.id === keep.id) {
+    return res.status(400).json({ error: 'That is the same vendor.' });
+  }
+
+  const moved = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total FROM invoices WHERE vendor_id = ?')
+    .get(drop.id);
+
+  db.transaction(() => {
+    db.prepare('UPDATE invoices SET vendor_id = ?, updated_at = datetime(\'now\') WHERE vendor_id = ?')
+      .run(keep.id, drop.id);
+
+    // Delivery answers: the kept vendor's answer wins for any address both
+    // were asked about, since that is the row the user has been looking at.
+    db.prepare(`
+      INSERT OR IGNORE INTO vendor_delivery
+        (vendor_id, address_key, address, delivers, lead_time_days, note, updated_at)
+      SELECT ?, address_key, address, delivers, lead_time_days, note, updated_at
+      FROM vendor_delivery WHERE vendor_id = ?
+    `).run(keep.id, drop.id);
+    db.prepare('DELETE FROM vendor_delivery WHERE vendor_id = ?').run(drop.id);
+
+    // Contact details: fill the gaps, never overwrite what is already there.
+    const filled = {
+      email: keep.email || drop.email || '',
+      phone: keep.phone || drop.phone || '',
+      contact: keep.contact || drop.contact || '',
+      terms: keep.terms || drop.terms || '',
+    };
+    db.prepare('UPDATE vendors SET email = @email, phone = @phone, contact = @contact, terms = @terms WHERE id = @id')
+      .run({ ...filled, id: keep.id });
+
+    // Any alias already pointing at the vendor being removed follows it.
+    db.prepare('UPDATE vendor_aliases SET vendor_id = ? WHERE vendor_id = ?').run(keep.id, drop.id);
+    db.prepare('INSERT OR REPLACE INTO vendor_aliases (name, vendor_id) VALUES (?, ?)')
+      .run(drop.name, keep.id);
+
+    db.prepare('DELETE FROM vendors WHERE id = ?').run(drop.id);
+  })();
+
+  res.json({
+    ok: true,
+    kept: db.prepare('SELECT * FROM vendors WHERE id = ?').get(keep.id),
+    removed: drop.name,
+    moved_invoices: moved.n,
+    moved_total: moved.total,
+  });
+});
+
 // Draft an email to this vendor from notes the user types.
 //
 // Nothing is sent from here. The draft lands in a box the user edits, and

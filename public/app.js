@@ -916,6 +916,7 @@ loaders.vendors = async function loadVendors() {
           ${address ? deliveryCells(v) : ''}
           <td class="num">
             <button class="btn small ghost" data-vendor-items="${v.id}">Search items</button>
+            <button class="btn small ghost" data-vendor-merge="${v.id}">Merge</button>
             <button class="btn small ghost" data-vendor-edit="${v.id}">Edit</button>
           </td>
         </tr>`).join('')}
@@ -1042,6 +1043,13 @@ $('#vendor-new').addEventListener('click', async () => {
 });
 
 $('#vendors-table').addEventListener('click', async (e) => {
+  const merge = e.target.closest('[data-vendor-merge]');
+  if (merge) {
+    e.stopPropagation();
+    openVendorMerge(merge.dataset.vendorMerge);
+    return;
+  }
+
   const mail = e.target.closest('[data-vendor-email]');
   if (mail) {
     e.stopPropagation();
@@ -1127,6 +1135,99 @@ $('#vi-contact-save').addEventListener('click', async (e) => {
     loaders.vendors();
   } catch (err) {
     toast(err.message, true);
+  }
+});
+
+/* ---------- merge two vendors ---------- */
+
+// Merging is destructive in the sense that one vendor row disappears, so the
+// dialog states what moves before it happens, and the button says which name
+// survives rather than just "Merge".
+async function openVendorMerge(vendorId) {
+  let data;
+  try {
+    data = await api(`/api/vendors/${vendorId}/merge-preview`);
+  } catch (err) {
+    toast(err.message, true);
+    return;
+  }
+
+  state.merge = { from: data.vendor, others: data.others };
+  $('#vm-title').textContent = `Merge ${data.vendor.name}`;
+
+  if (!data.others.length) {
+    $('#vm-target').innerHTML = '';
+    $('#vm-effect').innerHTML = emptyRow('There is no other vendor to merge into.');
+    $('#vm-go').disabled = true;
+  } else {
+    $('#vm-go').disabled = false;
+    // Likely duplicates first: same name ignoring case, punctuation and any
+    // non-Latin characters, which is exactly how these twins arise.
+    const key = (n) => n.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const mineKey = key(data.vendor.name);
+    const ranked = [...data.others].sort((a, b) => {
+      const am = key(a.name).includes(mineKey) || mineKey.includes(key(a.name)) ? 0 : 1;
+      const bm = key(b.name).includes(mineKey) || mineKey.includes(key(b.name)) ? 0 : 1;
+      return am - bm || a.name.localeCompare(b.name);
+    });
+    $('#vm-target').innerHTML = ranked.map((v) =>
+      `<option value="${v.id}">${esc(v.name)} — ${v.invoice_count} invoice${v.invoice_count === 1 ? '' : 's'}, ${money(v.total_spend)}</option>`).join('');
+  }
+
+  describeMerge();
+  $('#vendor-merge').classList.remove('hidden');
+}
+
+function describeMerge() {
+  const m = state.merge;
+  if (!m || !m.others.length) return;
+  const target = m.others.find((v) => String(v.id) === $('#vm-target').value);
+  if (!target) return;
+
+  const n = m.from.invoice_count;
+  $('#vm-effect').innerHTML = `
+    <p class="small"><strong>${esc(m.from.name)}</strong> disappears.
+      Its ${n} invoice${n === 1 ? '' : 's'} (${money(m.from.total_spend)}) move to
+      <strong>${esc(target.name)}</strong>, which then has
+      ${n + target.invoice_count} invoice${n + target.invoice_count === 1 ? '' : 's'}
+      worth ${money(m.from.total_spend + target.total_spend)}.</p>
+    <p class="muted small">Any email address or phone number only the old row had is kept.
+      Invoices that arrive spelled "${esc(m.from.name)}" from now on will land on
+      ${esc(target.name)} instead of making the duplicate again.</p>`;
+  $('#vm-go').textContent = `Merge into ${target.name}`;
+}
+
+$('#vm-target').addEventListener('change', describeMerge);
+
+function closeVendorMerge() {
+  $('#vendor-merge').classList.add('hidden');
+  state.merge = null;
+}
+$('#vm-close').addEventListener('click', closeVendorMerge);
+$('#vm-cancel').addEventListener('click', closeVendorMerge);
+
+$('#vm-go').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const m = state.merge;
+  if (!m) return;
+  const targetId = $('#vm-target').value;
+  if (!targetId) return;
+
+  const button = $('#vm-go');
+  button.disabled = true;
+  try {
+    // The surviving vendor owns the merge, so the URL names it and the body
+    // names the one being folded in.
+    const r = await api(`/api/vendors/${targetId}/merge`, {
+      method: 'POST',
+      body: JSON.stringify({ from: m.from.id }),
+    });
+    closeVendorMerge();
+    toast(`${r.removed} merged into ${r.kept.name} — ${r.moved_invoices} invoice${r.moved_invoices === 1 ? '' : 's'} moved.`);
+    loaders.vendors();
+  } catch (err) {
+    toast(err.message, true);
+    button.disabled = false;
   }
 });
 

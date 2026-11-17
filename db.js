@@ -254,10 +254,34 @@ function seedMenu() {
 
 seedMenu();
 
+// Names that mean a vendor we already have.
+//
+// The same supplier arrives spelled a dozen ways — in capitals on one invoice,
+// with the Chinese name attached on another. Each spelling used to create a
+// second vendor and split that supplier's spend in half. When two vendors are
+// merged, the loser's name is kept here, so the next invoice that arrives
+// under it lands on the vendor that was kept instead of recreating the
+// duplicate.
+db.exec(`
+CREATE TABLE IF NOT EXISTS vendor_aliases (
+  name      TEXT PRIMARY KEY COLLATE NOCASE,
+  vendor_id INTEGER NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+  added_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+
 function vendorId(name) {
   const clean = String(name || '').trim() || 'Unknown Vendor';
-  const found = db.prepare('SELECT id FROM vendors WHERE name = ?').get(clean);
+
+  // COLLATE NOCASE, because "GrubMarket Inc" and "GRUBMARKET INC" are one
+  // company. Matching exactly is what created the duplicates in the first place.
+  const found = db.prepare('SELECT id FROM vendors WHERE name = ? COLLATE NOCASE').get(clean);
   if (found) return found.id;
+
+  // A name retired by a merge points at the vendor that absorbed it.
+  const alias = db.prepare('SELECT vendor_id FROM vendor_aliases WHERE name = ?').get(clean);
+  if (alias) return alias.vendor_id;
+
   return db.prepare('INSERT INTO vendors (name) VALUES (?)').run(clean).lastInsertRowid;
 }
 

@@ -548,6 +548,32 @@ npm run disable-2fa</pre>
     </div>
   </div>
 
+  <!-- MERGE TWO VENDORS -->
+  <div class="modal hidden" id="vendor-merge">
+    <div class="modal-card narrow">
+      <div class="modal-head">
+        <h2 id="vm-title">Merge vendors</h2>
+        <button class="icon-btn" id="vm-close" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted small">The same supplier spelled two ways has its spend split
+          between two rows. Merging moves every invoice onto one of them. No totals
+          change — the invoices simply stop being counted as two suppliers.</p>
+
+        <label class="block">Merge this vendor into
+          <select id="vm-target"></select>
+        </label>
+
+        <div id="vm-effect"></div>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button class="btn ghost" id="vm-cancel">Cancel</button>
+        <button class="btn" id="vm-go">Merge</button>
+      </div>
+    </div>
+  </div>
+
   <!-- WRITE AN EMAIL TO A VENDOR -->
   <div class="modal hidden" id="vendor-email">
     <div class="modal-card">
